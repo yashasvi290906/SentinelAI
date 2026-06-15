@@ -1,0 +1,23 @@
+# Dataset
+data/
+
+# Processed files
+processed/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Virtual environments
+venv/
+.env
+
+# Browser-export junk
+*_files/
+
+# OS files
+.DS_Store
+Thumbs.db
