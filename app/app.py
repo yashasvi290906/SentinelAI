@@ -197,6 +197,12 @@ comparison_history: deque = deque(maxlen=MAX_HISTORY)
 threat_events: deque = deque(maxlen=MAX_HISTORY)
 drift_history: deque = deque(maxlen=MAX_HISTORY)
 
+# Broadcast queue for real-time detection events (ingestion → WebSocket)
+broadcast_queue: deque = deque(maxlen=500)
+# Counter to auto-trigger correlation every N detections
+_detection_counter: int = 0
+CORRELATION_BATCH_SIZE: int = 10
+
 
 def _record_threat_event(event_type: str, prediction: str, confidence: float, severity_score: float, details: dict = None):
     """Record a real threat event."""
@@ -1287,25 +1293,32 @@ async def websocket_events(websocket: WebSocket):
         await websocket.close(code=4001, reason="Invalid token")
         return
     try:
-        last_event_count = 0
+        last_pred_count = 0
+        last_broadcast_count = 0
         while True:
+            # Stream prediction events (from simulation/predictions)
             pred_list = list(prediction_history)
-            threat_list = list(threat_events)
-            current_count = len(pred_list) + len(threat_list)
+            if len(pred_list) > last_pred_count:
+                for pred in pred_list[:len(pred_list) - last_pred_count]:
+                    event = {
+                        "id": f"evt-{uuid.uuid4().hex[:8]}",
+                        "timestamp": pred.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                        "type": "prediction",
+                        "attack_type": pred.get("prediction", "Unknown"),
+                        "confidence": pred.get("confidence", 0),
+                        "severity_score": pred.get("severity_score", 0),
+                        "severity": pred.get("severity", "LOW"),
+                        "status": "DETECTED",
+                    }
+                    await websocket.send_json(event)
+                last_pred_count = len(pred_list)
 
-            if current_count > last_event_count and pred_list:
-                pred = pred_list[0]
-                event = {
-                    "id": f"evt-{uuid.uuid4().hex[:8]}",
-                    "timestamp": pred.get("timestamp", datetime.now(timezone.utc).isoformat()),
-                    "attack_type": pred.get("prediction", "Unknown"),
-                    "confidence": pred.get("confidence", 0),
-                    "severity_score": pred.get("severity_score", 0),
-                    "severity": pred.get("severity", "LOW"),
-                    "status": "DETECTED",
-                }
-                await websocket.send_json(event)
-                last_event_count = current_count
+            # Stream real-time ingestion events (detections + incidents)
+            bcast_list = list(broadcast_queue)
+            if len(bcast_list) > last_broadcast_count:
+                for evt in bcast_list[:len(bcast_list) - last_broadcast_count]:
+                    await websocket.send_json(evt)
+                last_broadcast_count = len(bcast_list)
 
             await asyncio.sleep(1.0)
     except WebSocketDisconnect:
@@ -1350,7 +1363,7 @@ async def upload_log(file: UploadFile = File(...)):
         if detection_dicts:
             db.insert_threat_detections(log_id, detection_dicts)
 
-        # Create alerts from detections
+        # Create alerts from detections + broadcast for real-time UI
         for det in detections:
             db.create_alert(
                 alert_type=det.threat_type,
@@ -1368,6 +1381,49 @@ async def upload_log(file: UploadFile = File(...)):
                 recommendations=det.recommendations,
                 log_id=log_id,
             )
+            broadcast_queue.appendleft({
+                "id": f"evt-{uuid.uuid4().hex[:8]}",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "type": "detection",
+                "attack_type": det.threat_type,
+                "confidence": det.confidence,
+                "severity_score": det.severity_score,
+                "severity": det.severity,
+                "source_ip": det.source_ip,
+                "dest_ip": det.dest_ip,
+                "dest_port": det.dest_port,
+                "description": det.description,
+                "mitre_technique": det.mitre_technique,
+                "mitre_tactic": det.mitre_tactic,
+            })
+
+        # Auto-correlate after batch upload if enough detections
+        global _detection_counter
+        _detection_counter += len(detections)
+        if _detection_counter >= CORRELATION_BATCH_SIZE:
+            _detection_counter = 0
+            try:
+                from services.correlation_service import correlation_engine
+                alerts = db.get_alerts(status='open', limit=200)
+                incidents = correlation_engine.correlate(alerts)
+                for inc in incidents:
+                    inc_id = db.create_incident(
+                        title=inc.title, severity=inc.severity, description=inc.description,
+                        alert_ids=inc.alert_ids, timeline=inc.timeline, affected_ips=inc.affected_ips,
+                        mitre_techniques=inc.mitre_techniques, mitre_tactics=inc.mitre_tactics,
+                        recommendations=inc.recommendations, confidence=inc.confidence,
+                    )
+                    broadcast_queue.appendleft({
+                        "id": f"inc-{uuid.uuid4().hex[:8]}",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "type": "incident",
+                        "incident_id": inc_id,
+                        "title": inc.title,
+                        "severity": inc.severity,
+                        "affected_ips": inc.affected_ips,
+                    })
+            except Exception as e:
+                logger.warning(f"Auto-correlation failed: {e}")
 
         anomaly_result = anomaly_detector.detect(event_dicts)
         anomaly_dict = anomaly_result.to_dict()
@@ -1693,6 +1749,13 @@ async def get_dashboard_stats():
 
     threat_score = calculate_threat_score()
 
+    try:
+        alert_stats = db.get_alert_stats()
+        incident_stats = db.get_incident_stats()
+    except Exception:
+        alert_stats = {"total": 0, "open": 0, "critical": 0, "high": 0}
+        incident_stats = {"total": 0, "open": 0, "critical": 0}
+
     return {
         "total_logs": db_stats.get('total_logs', 0),
         "total_events": db_stats.get('total_events', 0),
@@ -1707,6 +1770,11 @@ async def get_dashboard_stats():
         "avg_anomaly_score": db_stats.get('avg_anomaly_score', 0),
         "threat_score": threat_score,
         "total_reports": db.get_total_reports(),
+        "total_alerts": alert_stats.get('total', 0),
+        "open_alerts": alert_stats.get('open', 0),
+        "critical_alerts": alert_stats.get('critical', 0),
+        "total_incidents": incident_stats.get('total', 0),
+        "open_incidents": incident_stats.get('open', 0),
     }
 
 
@@ -1849,7 +1917,9 @@ async def ingest_batch(batch: IngestBatch):
 
 
 async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
-    """Process a single ingested event: store, detect threats, return result."""
+    """Process a single ingested event: store, detect threats, broadcast, auto-correlate."""
+    global _detection_counter
+
     event_dict = event.model_dump()
     event_dict['source_type'] = source
 
@@ -1862,14 +1932,80 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
 
     detector = ThreatDetector()
     detections = detector.analyze_events([event_dict])
+    created_alerts = []
+
     if detections:
         db.insert_threat_detections(log_id, [d.to_dict() for d in detections])
+        for det in detections:
+            alert = db.create_alert(
+                alert_type=det.threat_type,
+                severity=det.severity,
+                title=f"{det.threat_type.replace('_', ' ').title()} from {det.source_ip}",
+                description=det.description,
+                source_ip=det.source_ip,
+                dest_ip=det.dest_ip,
+                source_port=0,
+                dest_port=det.dest_port,
+                protocol="",
+                mitre_technique=det.mitre_technique,
+                mitre_tactic=det.mitre_tactic,
+                evidence=det.evidence,
+                recommendations=det.recommendations,
+                log_id=log_id,
+            )
+            if alert:
+                created_alerts.append(alert)
+
+            # Push to broadcast queue for real-time WebSocket
+            broadcast_queue.appendleft({
+                "id": f"evt-{uuid.uuid4().hex[:8]}",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "type": "detection",
+                "attack_type": det.threat_type,
+                "confidence": det.confidence,
+                "severity_score": det.severity_score,
+                "severity": det.severity,
+                "source_ip": det.source_ip,
+                "dest_ip": det.dest_ip,
+                "dest_port": det.dest_port,
+                "description": det.description,
+                "mitre_technique": det.mitre_technique,
+                "mitre_tactic": det.mitre_tactic,
+            })
+
+        # Auto-trigger correlation after every N detections
+        _detection_counter += len(detections)
+        if _detection_counter >= CORRELATION_BATCH_SIZE:
+            _detection_counter = 0
+            try:
+                from services.correlation_service import correlation_engine
+                alerts = db.get_alerts(status='open', limit=200)
+                incidents = correlation_engine.correlate(alerts)
+                for inc in incidents:
+                    inc_id = db.create_incident(
+                        title=inc.title, severity=inc.severity, description=inc.description,
+                        alert_ids=inc.alert_ids, timeline=inc.timeline, affected_ips=inc.affected_ips,
+                        mitre_techniques=inc.mitre_techniques, mitre_tactics=inc.mitre_tactics,
+                        recommendations=inc.recommendations, confidence=inc.confidence,
+                    )
+                    broadcast_queue.appendleft({
+                        "id": f"inc-{uuid.uuid4().hex[:8]}",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "type": "incident",
+                        "incident_id": inc_id,
+                        "title": inc.title,
+                        "severity": inc.severity,
+                        "affected_ips": inc.affected_ips,
+                    })
+            except Exception as e:
+                logger.warning(f"Auto-correlation failed: {e}")
 
     return {
         "log_id": log_id,
         "event_type": event.event_type,
         "severity": event.severity,
         "threats_detected": len(detections),
+        "alerts_created": len(created_alerts),
     }
 
 
@@ -1917,10 +2053,10 @@ async def list_devices():
 # ── Alert Management ──
 
 @app.get("/api/alerts")
-async def get_alerts(severity: str = "", status: str = "", limit: int = 100):
+async def get_alerts(severity: str = "", status: str = "", org_id: str = "", limit: int = 100):
     """Get all alerts with optional filtering."""
     from database import db
-    alerts = db.get_alerts(severity=severity or None, status=status or None, limit=limit)
+    alerts = db.get_alerts(org_id=org_id or None, severity=severity or None, status=status or None, limit=limit)
     return {"alerts": alerts, "count": len(alerts)}
 
 @app.get("/api/alerts/stats")
@@ -1967,9 +2103,9 @@ async def add_alert_note(alert_id: str, request: Request):
 # ── Incident Management ──
 
 @app.get("/api/incidents")
-async def get_incidents(status: str = "", severity: str = "", limit: int = 100):
+async def get_incidents(status: str = "", severity: str = "", org_id: str = "", limit: int = 100):
     from database import db
-    incidents = db.get_incidents(status=status or None, severity=severity or None, limit=limit)
+    incidents = db.get_incidents(org_id=org_id or None, status=status or None, severity=severity or None, limit=limit)
     return {"incidents": incidents, "count": len(incidents)}
 
 @app.get("/api/incidents/stats")

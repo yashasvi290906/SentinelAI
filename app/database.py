@@ -1244,22 +1244,28 @@ class DatabaseManager:
                 cur.execute("SELECT * FROM alerts WHERE device_id = ? ORDER BY created_at DESC LIMIT ?", (device_id, limit))
             return [dict(row) for row in cur.fetchall()]
 
-    def get_alert_stats(self) -> Dict[str, Any]:
+    def get_alert_stats(self, org_id: str = None) -> Dict[str, Any]:
         with self._cursor() as cur:
-            cur.execute("SELECT COUNT(*) as total FROM alerts")
+            org_filter = ""
+            params = []
+            if org_id:
+                org_filter = " WHERE organization_id = %s" if USE_POSTGRESQL else " WHERE organization_id = ?"
+                params = [org_id]
+
+            cur.execute(f"SELECT COUNT(*) as total FROM alerts{org_filter}", tuple(params))
             row = cur.fetchone()
             total = row['total'] if USE_POSTGRESQL else row[0]
 
-            cur.execute("SELECT severity, COUNT(*) as count FROM alerts GROUP BY severity")
+            cur.execute(f"SELECT severity, COUNT(*) as count FROM alerts{org_filter} GROUP BY severity", tuple(params))
             by_severity = {row['severity']: row['count'] if USE_POSTGRESQL else row[1] for row in cur.fetchall()}
 
-            cur.execute("SELECT status, COUNT(*) as count FROM alerts GROUP BY status")
+            cur.execute(f"SELECT status, COUNT(*) as count FROM alerts{org_filter} GROUP BY status", tuple(params))
             by_status = {row['status']: row['count'] if USE_POSTGRESQL else row[1] for row in cur.fetchall()}
 
-            cur.execute("SELECT alert_type, COUNT(*) as count FROM alerts GROUP BY alert_type ORDER BY count DESC")
+            cur.execute(f"SELECT alert_type, COUNT(*) as count FROM alerts{org_filter} GROUP BY alert_type ORDER BY count DESC", tuple(params))
             by_type = {row['alert_type']: row['count'] if USE_POSTGRESQL else row[1] for row in cur.fetchall()}
 
-            return {'total': total, 'by_severity': by_severity, 'by_status': by_status, 'by_type': by_type}
+            return {'total': total, 'open': by_status.get('open', 0), 'critical': by_severity.get('CRITICAL', 0), 'high': by_severity.get('HIGH', 0), 'by_severity': by_severity, 'by_status': by_status, 'by_type': by_type}
 
     # ── Investigation Notes ──
 
@@ -1316,10 +1322,13 @@ class DatabaseManager:
                       now, now))
         return incident_id
 
-    def get_incidents(self, status: str = None, severity: str = None, limit: int = 100) -> List[Dict]:
+    def get_incidents(self, org_id: str = None, status: str = None, severity: str = None, limit: int = 100) -> List[Dict]:
         with self._cursor() as cur:
             conditions = []
             params = []
+            if org_id:
+                conditions.append(f"organization_id = {'%s' if USE_POSTGRESQL else '?'}")
+                params.append(org_id)
             if status:
                 conditions.append(f"status = {'%s' if USE_POSTGRESQL else '?'}")
                 params.append(status)
@@ -1382,19 +1391,28 @@ class DatabaseManager:
                             (note_id, incident_id, user_id, note, now))
         return note_id
 
-    def get_incident_stats(self) -> Dict[str, Any]:
+    def get_incident_stats(self, org_id: str = None) -> Dict[str, Any]:
         with self._cursor() as cur:
-            cur.execute("SELECT COUNT(*) as total FROM incidents")
+            org_filter = ""
+            params = []
+            if org_id:
+                org_filter = " WHERE organization_id = %s" if USE_POSTGRESQL else " WHERE organization_id = ?"
+                params = [org_id]
+
+            cur.execute(f"SELECT COUNT(*) as total FROM incidents{org_filter}", tuple(params))
             row = cur.fetchone()
             total = row['total'] if USE_POSTGRESQL else row[0]
 
-            cur.execute("SELECT severity, COUNT(*) as count FROM incidents GROUP BY severity")
+            cur.execute(f"SELECT severity, COUNT(*) as count FROM incidents{org_filter} GROUP BY severity", tuple(params))
             by_severity = {row['severity']: row['count'] if USE_POSTGRESQL else row[1] for row in cur.fetchall()}
 
-            cur.execute("SELECT status, COUNT(*) as count FROM incidents GROUP BY status")
+            cur.execute(f"SELECT status, COUNT(*) as count FROM incidents{org_filter} GROUP BY status", tuple(params))
             by_status = {row['status']: row['count'] if USE_POSTGRESQL else row[1] for row in cur.fetchall()}
 
-            return {'total': total, 'by_severity': by_severity, 'by_status': by_status}
+            open_count = by_status.get('open', 0) if isinstance(by_status, dict) else 0
+            critical_count = by_severity.get('CRITICAL', 0) if isinstance(by_severity, dict) else 0
+
+            return {'total': total, 'open': open_count, 'critical': critical_count, 'by_severity': by_severity, 'by_status': by_status}
 
     def get_uploaded_log_by_id(self, log_id: str) -> Optional[Dict]:
         with self._cursor() as cur:
