@@ -16,7 +16,6 @@ from starlette.requests import Request
 from starlette.responses import Response
 import json as _json
 import logging
-import random as _random
 import uuid
 
 from services.parser_service import parser
@@ -1274,79 +1273,8 @@ async def get_audit_log(payload: dict = Depends(require_auth)):
 
 
 # =========================
-# WebSocket Event Stream (real events from history)
+# WebSocket Event Stream (real events only)
 # =========================
-ATTACK_TYPES = ["DDoS", "DoS", "PortScan", "Bot", "WebAttack", "BruteForce", "Infiltration"]
-SOURCE_IPS = ["45.33.32.156", "192.168.1.0", "103.21.244.0", "185.220.101.45", "203.0.113.42", "198.51.100.7"]
-DEST_IPS = ["10.0.0.1", "10.0.0.12", "172.16.0.5", "10.0.1.100", "10.0.2.50"]
-COUNTRIES = ["RU", "CN", "KP", "IR", "US", "BR", "VN", "IN"]
-COUNTRY_GEO = {
-    "RU": {"lat": 61.524, "lng": 105.318, "name": "Russia"},
-    "CN": {"lat": 35.861, "lng": 104.195, "name": "China"},
-    "KP": {"lat": 40.339, "lng": 127.510, "name": "North Korea"},
-    "IR": {"lat": 32.427, "lng": 53.688, "name": "Iran"},
-    "US": {"lat": 37.090, "lng": -95.712, "name": "United States"},
-    "BR": {"lat": -14.235, "lng": -51.925, "name": "Brazil"},
-    "VN": {"lat": 14.058, "lng": 108.277, "name": "Vietnam"},
-    "IN": {"lat": 20.593, "lng": 78.962, "name": "India"},
-}
-DEST_COUNTRIES = ["US", "DE", "GB", "JP", "KR", "AU", "FR", "NL"]
-DEST_COUNTRY_GEO = {
-    "US": {"lat": 37.090, "lng": -95.712, "name": "United States"},
-    "DE": {"lat": 51.165, "lng": 10.451, "name": "Germany"},
-    "GB": {"lat": 55.378, "lng": -3.436, "name": "United Kingdom"},
-    "JP": {"lat": 36.204, "lng": 138.252, "name": "Japan"},
-    "KR": {"lat": 35.907, "lng": 127.766, "name": "South Korea"},
-    "AU": {"lat": -25.274, "lng": 133.775, "name": "Australia"},
-    "FR": {"lat": 46.227, "lng": 2.213, "name": "France"},
-    "NL": {"lat": 52.132, "lng": 5.291, "name": "Netherlands"},
-}
-SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
-STATUSES = ["DETECTED", "BLOCKED", "QUARANTINED", "INVESTIGATING"]
-
-_random.seed()
-
-
-async def generate_event():
-    # Mix of real recent predictions and simulated events
-    pred_list = list(prediction_history)
-
-    if pred_list and _random.random() < 0.6:
-        # Use real prediction data
-        pred = _random.choice(pred_list[:10])
-        attack = pred.get("prediction", _random.choice(ATTACK_TYPES))
-        confidence = pred.get("confidence", _random.uniform(0.55, 0.99))
-        severity_score = pred.get("severity_score", _random.uniform(20, 95))
-    else:
-        attack = _random.choices(ATTACK_TYPES, weights=[30, 20, 15, 15, 10, 5, 5])[0]
-        confidence = round(_random.uniform(0.55, 0.99), 3)
-        severity_score = round(confidence * ATTACK_WEIGHTS.get(attack, 0.5) * 100, 1)
-
-    severity = "CRITICAL" if severity_score >= SEVERITY_HIGH_THRESHOLD else "HIGH" if severity_score >= SEVERITY_MEDIUM_THRESHOLD else "MEDIUM" if severity_score >= SEVERITY_LOW_THRESHOLD else "LOW"
-
-    return {
-        "id": _random.randint(100000, 999999),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "attack_type": attack,
-        "source_ip": _random.choice(SOURCE_IPS),
-        "dest_ip": _random.choice(DEST_IPS),
-        "severity": severity,
-        "status": _random.choice(STATUSES),
-        "confidence": round(confidence, 3),
-        "severity_score": severity_score,
-        "geo": {
-            "src_country": _random.choice(COUNTRIES),
-            "src_lat": round(_random.uniform(-60, 70), 4),
-            "src_lng": round(_random.uniform(-160, 160), 4),
-        },
-        "dest_geo": {
-            "dest_country": _random.choice(DEST_COUNTRIES),
-            "dest_lat": round(_random.uniform(-50, 65), 4),
-            "dest_lng": round(_random.uniform(-130, 150), 4),
-        }
-    }
-
-
 @app.websocket("/ws/events")
 async def websocket_events(websocket: WebSocket):
     await websocket.accept()
@@ -1359,22 +1287,34 @@ async def websocket_events(websocket: WebSocket):
         await websocket.close(code=4001, reason="Invalid token")
         return
     try:
+        last_event_count = 0
         while True:
-            event = await generate_event()
-            await websocket.send_json(event)
-            await asyncio.sleep(_random.uniform(0.8, 2.5))
+            pred_list = list(prediction_history)
+            threat_list = list(threat_events)
+            current_count = len(pred_list) + len(threat_list)
+
+            if current_count > last_event_count and pred_list:
+                pred = pred_list[0]
+                event = {
+                    "id": f"evt-{uuid.uuid4().hex[:8]}",
+                    "timestamp": pred.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                    "attack_type": pred.get("prediction", "Unknown"),
+                    "confidence": pred.get("confidence", 0),
+                    "severity_score": pred.get("severity_score", 0),
+                    "severity": pred.get("severity", "LOW"),
+                    "status": "DETECTED",
+                }
+                await websocket.send_json(event)
+                last_event_count = current_count
+
+            await asyncio.sleep(1.0)
     except WebSocketDisconnect:
         pass
 
 
 # =========================
-# In-Memory Stores for Log Analysis
+# Threat Detector
 # =========================
-uploaded_logs: dict = {}
-log_events: dict = {}
-threat_detections_store: list = []
-anomaly_results_store: dict = {}
-reports_store: dict = {}
 threat_detector = ThreatDetector()
 
 
@@ -1397,25 +1337,50 @@ async def upload_log(file: UploadFile = File(...)):
         events = parser.parse(text, file.filename)
         event_dicts = [e.to_dict() for e in events]
 
-        log_id = str(uuid.uuid4())
+        log_id = db.create_uploaded_log(
+            filename=file.filename,
+            source_type=ext,
+            file_size=len(content),
+        )
+
+        db.insert_log_events(log_id, event_dicts)
+
         detections = threat_detector.analyze_events(event_dicts)
         detection_dicts = [d.to_dict() for d in detections]
-        threat_detections_store.extend(detection_dicts)
+        if detection_dicts:
+            db.insert_threat_detections(log_id, detection_dicts)
+
+        # Create alerts from detections
+        for det in detections:
+            db.create_alert(
+                alert_type=det.threat_type,
+                severity=det.severity,
+                title=f"{det.threat_type.replace('_', ' ').title()} from {det.source_ip}",
+                description=det.description,
+                source_ip=det.source_ip,
+                dest_ip=det.dest_ip,
+                source_port=0,
+                dest_port=det.dest_port,
+                protocol="",
+                mitre_technique=det.mitre_technique,
+                mitre_tactic=det.mitre_tactic,
+                evidence=det.evidence,
+                recommendations=det.recommendations,
+                log_id=log_id,
+            )
 
         anomaly_result = anomaly_detector.detect(event_dicts)
         anomaly_dict = anomaly_result.to_dict()
+        db.insert_anomaly_score(
+            log_id,
+            anomaly_dict.get("anomaly_score", 0),
+            anomaly_dict.get("risk_level", "LOW"),
+            anomaly_dict.get("anomalies", []),
+            anomaly_dict.get("feature_scores", {}),
+            anomaly_dict.get("explanation", ""),
+        )
 
-        uploaded_logs[log_id] = {
-            "id": log_id,
-            "filename": file.filename,
-            "size": len(content),
-            "format": ext,
-            "event_count": len(events),
-            "detection_count": len(detections),
-            "uploaded_at": datetime.now(timezone.utc).isoformat(),
-        }
-        log_events[log_id] = event_dicts
-        anomaly_results_store[log_id] = anomaly_dict
+        db.update_log_status(log_id, status="completed", event_count=len(events))
 
         return {
             "log_id": log_id,
@@ -1437,8 +1402,7 @@ async def upload_log(file: UploadFile = File(...)):
 # =========================
 @app.get("/api/logs")
 async def list_logs():
-    logs = list(uploaded_logs.values())
-    logs.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
+    logs = db.get_uploaded_logs(limit=50)
     return {"logs": logs, "total": len(logs)}
 
 
@@ -1447,12 +1411,12 @@ async def list_logs():
 # =========================
 @app.get("/api/logs/{log_id}/events")
 async def get_log_events(log_id: str):
-    if log_id not in uploaded_logs:
+    log_meta = db.get_uploaded_log_by_id(log_id)
+    if not log_meta:
         return JSONResponse(status_code=404, content={"error": "Log not found"})
-    events = log_events.get(log_id, [])
-    meta = uploaded_logs[log_id]
+    events = db.get_log_events(log_id, limit=5000)
     return {
-        "log": meta,
+        "log": log_meta,
         "events": events,
         "total": len(events),
     }
@@ -1468,16 +1432,12 @@ async def get_threats(
     source_ip: str = "",
     limit: int = 100,
 ):
-    results = threat_detections_store
-
-    if severity:
-        results = [d for d in results if d.get("severity", "").upper() == severity.upper()]
-    if threat_type:
-        results = [d for d in results if d.get("threat_type", "") == threat_type]
-    if source_ip:
-        results = [d for d in results if d.get("source_ip", "") == source_ip]
-
-    results = results[:limit]
+    results = db.get_threat_detections_filtered(
+        severity=severity or None,
+        threat_type=threat_type or None,
+        source_ip=source_ip or None,
+        limit=limit,
+    )
     return {"threats": results, "total": len(results)}
 
 
@@ -1486,48 +1446,7 @@ async def get_threats(
 # =========================
 @app.get("/api/threats/summary")
 async def get_threat_summary():
-    all_threats = threat_detections_store
-    by_severity = {}
-    by_type = {}
-    by_ip = {}
-    total = len(all_threats)
-
-    for t in all_threats:
-        sev = t.get("severity", "INFO")
-        by_severity[sev] = by_severity.get(sev, 0) + 1
-
-        ttype = t.get("threat_type", "unknown")
-        by_type[ttype] = by_type.get(ttype, 0) + 1
-
-        ip = t.get("source_ip", "")
-        if ip:
-            if ip not in by_ip:
-                by_ip[ip] = {"ip": ip, "count": 0, "types": set()}
-            by_ip[ip]["count"] += 1
-            by_ip[ip]["types"].add(ttype)
-
-    top_ips = sorted(by_ip.values(), key=lambda x: -x["count"])[:10]
-    for ip_entry in top_ips:
-        ip_entry["types"] = list(ip_entry["types"])
-
-    critical = by_severity.get("CRITICAL", 0)
-    high = by_severity.get("HIGH", 0)
-    if critical > 0:
-        risk_level = "CRITICAL"
-    elif high >= 3:
-        risk_level = "HIGH"
-    elif high > 0 or total > 5:
-        risk_level = "MEDIUM"
-    else:
-        risk_level = "LOW"
-
-    return {
-        "total": total,
-        "by_severity": by_severity,
-        "by_type": by_type,
-        "top_source_ips": top_ips,
-        "risk_level": risk_level,
-    }
+    return db.get_threat_summary_full()
 
 
 # =========================
@@ -1536,13 +1455,21 @@ async def get_threat_summary():
 @app.post("/api/anomaly/analyze")
 async def analyze_anomaly(data: AnomalyAnalysisRequest):
     log_id = data.log_id
-    if log_id not in log_events:
+    log_meta = db.get_uploaded_log_by_id(log_id)
+    if not log_meta:
         return JSONResponse(status_code=404, content={"error": "Log not found. Upload a log first."})
 
-    events = log_events[log_id]
+    events = db.get_log_events(log_id, limit=5000)
     result = anomaly_detector.detect(events)
     result_dict = result.to_dict()
-    anomaly_results_store[log_id] = result_dict
+    db.insert_anomaly_score(
+        log_id,
+        result_dict.get("anomaly_score", 0),
+        result_dict.get("risk_level", "LOW"),
+        result_dict.get("anomalies", []),
+        result_dict.get("feature_scores", {}),
+        result_dict.get("explanation", ""),
+    )
 
     return {
         "log_id": log_id,
@@ -1559,7 +1486,9 @@ async def get_mitre_coverage():
     technique_list = []
     seen_techniques = set()
 
-    for det in threat_detections_store:
+    all_detections = db.get_threat_detections(limit=1000)
+
+    for det in all_detections:
         ttype = det.get("threat_type", "")
         mapping = mitre_mapper.map_detection(ttype)
         if mapping.get("technique_id") == "Unknown":
@@ -1589,7 +1518,7 @@ async def get_mitre_coverage():
     return {
         "tactics": list(tactic_map.values()),
         "total_techniques": len(seen_techniques),
-        "total_detections": len(threat_detections_store),
+        "total_detections": len(all_detections),
     }
 
 
@@ -1598,12 +1527,8 @@ async def get_mitre_coverage():
 # =========================
 @app.get("/api/investigate/{ip}")
 async def investigate_ip(ip: str):
-    ip_threats = [d for d in threat_detections_store if d.get("source_ip") == ip or d.get("dest_ip") == ip]
-    ip_events = []
-    for events_list in log_events.values():
-        for ev in events_list:
-            if ev.get("source_ip") == ip or ev.get("dest_ip") == ip:
-                ip_events.append(ev)
+    ip_threats = db.get_threats_by_ip(ip)
+    ip_events = db.get_events_by_ip(ip, limit=100)
 
     threat_types = {}
     for t in ip_threats:
@@ -1635,31 +1560,33 @@ async def investigate_ip(ip: str):
 @app.post("/api/reports/generate")
 async def generate_report(data: ReportRequest):
     try:
-        detections = threat_detections_store
-        events = []
-        for ev_list in log_events.values():
-            events.extend(ev_list)
+        detections = db.get_threat_detections(limit=1000)
+        all_events = []
+        uploaded = db.get_uploaded_logs(limit=100)
+        for log in uploaded:
+            evts = db.get_log_events(log["id"], limit=5000)
+            all_events.extend(evts)
 
         if data.report_type == "incident" and data.detection_id:
             detection = next((d for d in detections if d.get("id") == data.detection_id), None)
             if not detection:
                 return JSONResponse(status_code=404, content={"error": "Detection not found"})
-            related = [e for e in events if e.get("source_ip") == detection.get("source_ip")]
+            related = [e for e in all_events if e.get("source_ip") == detection.get("source_ip")]
             report = report_generator.generate_incident_report(detection, related)
         elif data.report_type == "executive":
             stats = {
                 "total_threats": len(detections),
                 "critical_threats": sum(1 for d in detections if d.get("severity") == "CRITICAL"),
             }
-            anomaly = list(anomaly_results_store.values())[-1] if anomaly_results_store else {}
-            report = report_generator.generate_executive_report(stats, detections, anomaly)
+            anomaly = db.get_latest_anomaly_score()
+            report = report_generator.generate_executive_report(stats, detections, anomaly or {})
         else:
-            anomaly = list(anomaly_results_store.values())[-1] if anomaly_results_store else {}
-            report = report_generator.generate_technical_report(events, detections, anomaly)
+            anomaly = db.get_latest_anomaly_score()
+            report = report_generator.generate_technical_report(all_events, detections, anomaly or {})
 
         report_id = str(uuid.uuid4())
         report["id"] = report_id
-        reports_store[report_id] = report
+        db.create_report(data.report_type, report.get("title", "Report"), report)
 
         return {
             "report_id": report_id,
@@ -1676,13 +1603,13 @@ async def generate_report(data: ReportRequest):
 # =========================
 @app.get("/api/reports/{report_id}/download")
 async def download_report(report_id: str, format: str = "json"):
-    if report_id not in reports_store:
+    reports = db.get_reports(limit=1000)
+    report = next((r for r in reports if r.get("id") == report_id), None)
+    if not report:
         return JSONResponse(status_code=404, content={"error": "Report not found"})
 
-    report = reports_store[report_id]
-
     if format == "csv":
-        detections = threat_detections_store
+        detections = db.get_threat_detections(limit=1000)
         csv_content = report_generator.export_csv(detections)
         return StreamingResponse(
             iter([csv_content.encode("utf-8")]),
@@ -1690,7 +1617,8 @@ async def download_report(report_id: str, format: str = "json"):
             headers={"Content-Disposition": f"attachment; filename=report-{report_id}.csv"},
         )
     else:
-        json_content = report_generator.export_json(report)
+        report_data = _json.loads(report.get("data_json", "{}")) if isinstance(report.get("data_json"), str) else report.get("data_json", {})
+        json_content = report_generator.export_json(report_data)
         return StreamingResponse(
             iter([json_content.encode("utf-8")]),
             media_type="application/json",
@@ -1752,27 +1680,11 @@ def _is_valid_hash(s: str) -> bool:
 @app.get("/api/dashboard/stats")
 async def get_dashboard_stats():
     pred_list = list(prediction_history)
-    all_threats = threat_detections_store
-    all_events_count = sum(len(ev) for ev in log_events.values())
+    db_stats = db.get_dashboard_stats()
+    threat_summary = db.get_threat_summary()
 
-    threats_by_severity = {}
-    for t in all_threats:
-        sev = t.get("severity", "INFO")
-        threats_by_severity[sev] = threats_by_severity.get(sev, 0) + 1
-
-    threats_by_type = {}
-    for t in all_threats:
-        tt = t.get("threat_type", "unknown")
-        threats_by_type[tt] = threats_by_type.get(tt, 0) + 1
-
-    unique_source_ips = set()
-    for t in all_threats:
-        ip = t.get("source_ip", "")
-        if ip:
-            unique_source_ips.add(ip)
-
-    anomaly_scores = [a.get("anomaly_score", 0) for a in anomaly_results_store.values()]
-    avg_anomaly = sum(anomaly_scores) / len(anomaly_scores) if anomaly_scores else 0
+    threats_by_severity = threat_summary.get('by_severity', {})
+    threats_by_type = threat_summary.get('by_type', {})
 
     attack_dist = {}
     for p in pred_list:
@@ -1782,19 +1694,19 @@ async def get_dashboard_stats():
     threat_score = calculate_threat_score()
 
     return {
-        "total_logs": len(uploaded_logs),
-        "total_events": all_events_count,
-        "total_threats": len(all_threats),
+        "total_logs": db_stats.get('total_logs', 0),
+        "total_events": db_stats.get('total_events', 0),
+        "total_threats": db_stats.get('total_threats', 0),
         "critical_threats": threats_by_severity.get("CRITICAL", 0),
         "high_threats": threats_by_severity.get("HIGH", 0),
-        "unique_source_ips": len(unique_source_ips),
+        "unique_source_ips": db_stats.get('unique_source_ips', 0),
         "threats_by_severity": threats_by_severity,
         "threats_by_type": threats_by_type,
         "total_predictions": len(pred_list),
         "attack_distribution": attack_dist,
-        "avg_anomaly_score": round(avg_anomaly, 3),
+        "avg_anomaly_score": db_stats.get('avg_anomaly_score', 0),
         "threat_score": threat_score,
-        "total_reports": len(reports_store),
+        "total_reports": db.get_total_reports(),
     }
 
 
@@ -1805,13 +1717,16 @@ async def get_dashboard_stats():
 async def enhanced_copilot(data: CopilotRequest):
     try:
         question = data.question or f"Analyze {data.prediction} prediction"
-        detections = threat_detections_store
+        detections = db.get_threat_detections(limit=1000)
+
+        all_ev = []
+        uploaded = db.get_uploaded_logs(limit=100)
+        for log in uploaded:
+            evts = db.get_log_events(log["id"], limit=5000)
+            all_ev.extend(evts)
 
         events_summary = None
-        if log_events:
-            all_ev = []
-            for ev_list in log_events.values():
-                all_ev.extend(ev_list)
+        if all_ev:
             type_counts = {}
             ip_counts = {}
             for ev in all_ev:
@@ -1826,18 +1741,17 @@ async def enhanced_copilot(data: CopilotRequest):
                 "top_ips": sorted([{"ip": k, "count": v} for k, v in ip_counts.items()], key=lambda x: -x["count"])[:10],
             }
 
+        db_stats = db.get_dashboard_stats()
         dashboard_stats = {
-            "total_logs": len(uploaded_logs),
-            "total_events": sum(len(ev) for ev in log_events.values()),
-            "total_threats": len(detections),
-            "critical_threats": sum(1 for d in detections if d.get("severity") == "CRITICAL"),
-            "unique_source_ips": len(set(d.get("source_ip", "") for d in detections if d.get("source_ip"))),
-            "avg_anomaly_score": round(
-                sum(a.get("anomaly_score", 0) for a in anomaly_results_store.values()) / max(len(anomaly_results_store), 1), 3
-            ),
+            "total_logs": db_stats.get('total_logs', 0),
+            "total_events": db_stats.get('total_events', 0),
+            "total_threats": db_stats.get('total_threats', 0),
+            "critical_threats": db_stats.get('critical_threats', 0),
+            "unique_source_ips": db_stats.get('unique_source_ips', 0),
+            "avg_anomaly_score": db_stats.get('avg_anomaly_score', 0),
         }
 
-        anomaly_result = list(anomaly_results_store.values())[-1] if anomaly_results_store else None
+        anomaly_result = db.get_latest_anomaly_score()
 
         result = await gemini_copilot.chat(
             question=question,
@@ -1867,3 +1781,184 @@ async def enhanced_copilot(data: CopilotRequest):
     except Exception as e:
         logger.error(f"Enhanced copilot error: {e}", extra={"module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": "Copilot failed. Please try again."})
+
+
+# =========================
+# Streaming Ingestion Endpoints
+# =========================
+class IngestEvent(BaseModel):
+    timestamp: str = ""
+    source: str = ""
+    hostname: str = ""
+    source_ip: str = ""
+    destination_ip: str = ""
+    source_port: int = 0
+    destination_port: int = 0
+    protocol: str = ""
+    event_type: str = ""
+    severity: str = "INFO"
+    message: str = ""
+    raw_log: str = ""
+    metadata: dict = {}
+
+
+class IngestBatch(BaseModel):
+    events: list[IngestEvent]
+    device_id: str = ""
+    organization_id: str = ""
+
+
+@app.post("/ingest/windows")
+async def ingest_windows(event: IngestEvent):
+    """Ingest a Windows Event Log entry."""
+    return await _process_ingested_event(event, "windows")
+
+
+@app.post("/ingest/linux")
+async def ingest_linux(event: IngestEvent):
+    """Ingest a Linux syslog entry."""
+    return await _process_ingested_event(event, "linux")
+
+
+@app.post("/ingest/network")
+async def ingest_network(event: IngestEvent):
+    """Ingest a network flow/connection event."""
+    return await _process_ingested_event(event, "network")
+
+
+@app.post("/ingest/suricata")
+async def ingest_suricata(event: IngestEvent):
+    """Ingest a Suricata IDS alert."""
+    return await _process_ingested_event(event, "suricata")
+
+
+@app.post("/ingest/zeek")
+async def ingest_zeek(event: IngestEvent):
+    """Ingest a Zeek network log entry."""
+    return await _process_ingested_event(event, "zeek")
+
+
+@app.post("/ingest/batch")
+async def ingest_batch(batch: IngestBatch):
+    """Ingest a batch of events."""
+    results = []
+    for event in batch.events:
+        result = await _process_ingested_event(event, event.source or "unknown")
+        results.append(result)
+    return {"ingested": len(results), "results": results}
+
+
+async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
+    """Process a single ingested event: store, detect threats, return result."""
+    event_dict = event.model_dump()
+    event_dict['source_type'] = source
+
+    log_id = db.create_uploaded_log(
+        filename=f"ingest_{source}_{(event.timestamp or datetime.now(timezone.utc).isoformat())[:10]}",
+        source_type=source,
+        file_size=len(event.raw_log or event.message),
+    )
+    db.insert_log_events(log_id, [event_dict])
+
+    detector = ThreatDetector()
+    detections = detector.analyze_events([event_dict])
+    if detections:
+        db.insert_threat_detections(log_id, [d.to_dict() for d in detections])
+
+    return {
+        "log_id": log_id,
+        "event_type": event.event_type,
+        "severity": event.severity,
+        "threats_detected": len(detections),
+    }
+
+
+# =========================
+# Device Management
+# =========================
+class DeviceRegister(BaseModel):
+    hostname: str
+    ip_address: str
+    os_type: str = "unknown"
+    organization_id: str = ""
+
+
+@app.post("/api/devices/register")
+async def register_device(device: DeviceRegister):
+    """Register a new device/agent."""
+    device_id = str(uuid.uuid4())
+    db.create_uploaded_log(
+        filename=f"device_{device.hostname}",
+        source_type=f"device_{device.os_type}",
+        file_size=0,
+    )
+    return {"device_id": device_id, "hostname": device.hostname, "status": "registered"}
+
+
+@app.get("/api/devices")
+async def list_devices():
+    """List all registered devices."""
+    logs = db.get_uploaded_logs(limit=1000)
+    device_logs = [l for l in logs if l.get("source_type", "").startswith("device_")]
+    devices = []
+    seen = set()
+    for log in device_logs:
+        hostname = log.get("filename", "").replace("device_", "")
+        if hostname and hostname not in seen:
+            seen.add(hostname)
+            devices.append({
+                "hostname": hostname,
+                "os_type": log.get("source_type", "").replace("device_", ""),
+                "last_seen": log.get("upload_time", ""),
+            })
+    return {"devices": devices}
+
+
+# ── Alert Management ──
+
+@app.get("/api/alerts")
+async def get_alerts(severity: str = "", status: str = "", limit: int = 100):
+    """Get all alerts with optional filtering."""
+    from database import db
+    alerts = db.get_alerts(severity=severity or None, status=status or None, limit=limit)
+    return {"alerts": alerts, "count": len(alerts)}
+
+@app.get("/api/alerts/stats")
+async def get_alert_stats():
+    """Get alert statistics."""
+    from database import db
+    return db.get_alert_stats()
+
+@app.get("/api/alerts/{alert_id}")
+async def get_alert(alert_id: str):
+    """Get a single alert by ID."""
+    from database import db
+    alert = db.get_alert(alert_id)
+    if not alert:
+        return JSONResponse(status_code=404, content={"error": "Alert not found"})
+    return alert
+
+@app.post("/api/alerts/{alert_id}/status")
+async def update_alert_status(alert_id: str, request: Request):
+    """Update alert status (open, investigating, resolved, false_positive)."""
+    from database import db
+    body = await request.json()
+    status = body.get("status", "open")
+    db.update_alert_status(alert_id, status)
+    return {"status": "updated"}
+
+@app.get("/api/alerts/{alert_id}/notes")
+async def get_alert_notes(alert_id: str):
+    """Get investigation notes for an alert."""
+    from database import db
+    notes = db.get_investigation_notes(alert_id)
+    return {"notes": notes}
+
+@app.post("/api/alerts/{alert_id}/notes")
+async def add_alert_note(alert_id: str, request: Request):
+    """Add an investigation note to an alert."""
+    from database import db
+    body = await request.json()
+    note = body.get("note", "")
+    note_id = db.add_investigation_note(alert_id, user_id=None, note=note)
+    return {"note_id": note_id, "status": "created"}

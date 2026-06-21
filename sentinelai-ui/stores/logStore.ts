@@ -67,6 +67,30 @@ export interface DashboardStats {
   avg_anomaly_score: number;
 }
 
+export interface Alert {
+  id: string;
+  organization_id: string;
+  log_id: string;
+  device_id: string;
+  alert_type: string;
+  severity: string;
+  title: string;
+  description: string;
+  source_ip: string;
+  destination_ip: string;
+  source_port: number;
+  destination_port: number;
+  protocol: string;
+  mitre_technique: string;
+  mitre_tactic: string;
+  evidence: string[];
+  recommendations: string[];
+  status: string;
+  assigned_to: string;
+  created_at: string;
+  updated_at: string;
+}
+
 interface LogState {
   logs: UploadedLog[];
   currentLogId: string | null;
@@ -76,6 +100,8 @@ interface LogState {
   dashboardStats: DashboardStats | null;
   isUploading: boolean;
   isAnalyzing: boolean;
+  alerts: Alert[];
+  alertStats: any;
   
   setLogs: (logs: UploadedLog[]) => void;
   addLog: (log: UploadedLog) => void;
@@ -86,6 +112,8 @@ interface LogState {
   setDashboardStats: (stats: DashboardStats) => void;
   setIsUploading: (v: boolean) => void;
   setIsAnalyzing: (v: boolean) => void;
+  setAlerts: (alerts: Alert[]) => void;
+  setAlertStats: (stats: any) => void;
 }
 
 export const useLogStore = create<LogState>((set) => ({
@@ -97,6 +125,8 @@ export const useLogStore = create<LogState>((set) => ({
   dashboardStats: null,
   isUploading: false,
   isAnalyzing: false,
+  alerts: [],
+  alertStats: null,
   
   setLogs: (logs) => set({ logs }),
   addLog: (log) => set((s) => ({ logs: [log, ...s.logs] })),
@@ -107,4 +137,6 @@ export const useLogStore = create<LogState>((set) => ({
   setDashboardStats: (stats) => set({ dashboardStats: stats }),
   setIsUploading: (v) => set({ isUploading: v }),
   setIsAnalyzing: (v) => set({ isAnalyzing: v }),
+  setAlerts: (alerts) => set({ alerts }),
+  setAlertStats: (stats) => set({ alertStats: stats }),
 }));

@@ -27,6 +27,7 @@ import {
   LogOut,
   Upload,
   Search,
+  Server,
 } from 'lucide-react';
 import { useGlobalStore } from '@/stores/globalStore';
 import { useSystemStore } from '@/stores/systemStore';
@@ -56,6 +57,7 @@ const secondaryNav = [
   { id: 'threat-detection', label: 'Threats', icon: ShieldAlert },
   { id: 'mitre-matrix', label: 'MITRE', icon: Target },
   { id: 'investigation', label: 'Investigate', icon: Search },
+  { id: 'devices', label: 'Devices', icon: Server },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 

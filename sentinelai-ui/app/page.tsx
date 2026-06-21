@@ -30,6 +30,7 @@ const NetworkGraph = dynamic(() => import("@/modules/network-graph"), { loading:
 const KillChain = dynamic(() => import("@/modules/killchain"), { loading: () => <LoadingSkeleton /> });
 const DriftAnalytics = dynamic(() => import("@/modules/drift-analytics"), { loading: () => <LoadingSkeleton /> });
 const AttackJourney = dynamic(() => import("@/modules/attack-journey"), { loading: () => <LoadingSkeleton /> });
+const Devices = dynamic(() => import("@/modules/devices"), { loading: () => <LoadingSkeleton /> });
 const SystemArchitecture = dynamic(() => import("@/modules/system-architecture"), { loading: () => <LoadingSkeleton /> });
 const LogUpload = dynamic(() => import("@/modules/log-upload"), { loading: () => <LoadingSkeleton /> });
 const ThreatDetection = dynamic(() => import("@/modules/threat-detection"), { loading: () => <LoadingSkeleton /> });
@@ -59,6 +60,7 @@ const MODULE_MAP: Record<string, { component: React.ComponentType; label: string
   "threat-detection": { component: ThreatDetection, label: "Threat Detection" },
   "mitre-matrix": { component: MitreMatrix, label: "MITRE Matrix" },
   "investigation": { component: Investigation, label: "Investigation" },
+  devices: { component: Devices, label: "Devices" },
   about: { component: About, label: "About" },
 };
 

@@ -1,7 +1,7 @@
 """
 Database Manager for SentinelAI.
 Supports SQLite (development) and PostgreSQL (production).
-Handles: users, sessions, logs, threats, predictions, reports, notifications, audit_logs.
+Handles: users, sessions, logs, threats, predictions, reports, notifications, audit_logs, organizations, devices, alerts, investigation_notes.
 """
 import os
 import json
@@ -210,6 +210,66 @@ class DatabaseManager:
                     timestamp TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS organizations (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    slug TEXT UNIQUE NOT NULL,
+                    created_at TEXT NOT NULL,
+                    settings TEXT DEFAULT '{}'
+                );
+
+                CREATE TABLE IF NOT EXISTS devices (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT,
+                    hostname TEXT NOT NULL,
+                    ip_address TEXT NOT NULL,
+                    os_type TEXT DEFAULT 'unknown',
+                    status TEXT DEFAULT 'active',
+                    risk_score REAL DEFAULT 0.0,
+                    last_seen TEXT,
+                    created_at TEXT NOT NULL,
+                    metadata TEXT DEFAULT '{}',
+                    FOREIGN KEY (organization_id) REFERENCES organizations(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT,
+                    log_id TEXT,
+                    device_id TEXT,
+                    alert_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    source_ip TEXT DEFAULT '',
+                    destination_ip TEXT DEFAULT '',
+                    source_port INTEGER DEFAULT 0,
+                    destination_port INTEGER DEFAULT 0,
+                    protocol TEXT DEFAULT '',
+                    mitre_technique TEXT DEFAULT '',
+                    mitre_tactic TEXT DEFAULT '',
+                    evidence TEXT DEFAULT '[]',
+                    recommendations TEXT DEFAULT '[]',
+                    status TEXT DEFAULT 'open',
+                    assigned_to TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT,
+                    resolved_at TEXT,
+                    FOREIGN KEY (organization_id) REFERENCES organizations(id),
+                    FOREIGN KEY (log_id) REFERENCES uploaded_logs(id),
+                    FOREIGN KEY (device_id) REFERENCES devices(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS investigation_notes (
+                    id TEXT PRIMARY KEY,
+                    alert_id TEXT NOT NULL,
+                    user_id TEXT,
+                    note TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (alert_id) REFERENCES alerts(id),
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_log_events_log_id ON log_events(log_id);
                 CREATE INDEX IF NOT EXISTS idx_log_events_timestamp ON log_events(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_log_events_source_ip ON log_events(source_ip);
@@ -358,6 +418,60 @@ class DatabaseManager:
                     details TEXT DEFAULT '',
                     ip_address INET,
                     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS organizations (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name VARCHAR(255) NOT NULL,
+                    slug VARCHAR(255) UNIQUE NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    settings JSONB DEFAULT '{}'
+                );
+
+                CREATE TABLE IF NOT EXISTS devices (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    organization_id UUID REFERENCES organizations(id),
+                    hostname VARCHAR(255) NOT NULL,
+                    ip_address INET NOT NULL,
+                    os_type VARCHAR(50) DEFAULT 'unknown',
+                    status VARCHAR(50) DEFAULT 'active',
+                    risk_score REAL DEFAULT 0.0,
+                    last_seen TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    metadata JSONB DEFAULT '{}'
+                );
+
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    organization_id UUID REFERENCES organizations(id),
+                    log_id UUID REFERENCES uploaded_logs(id),
+                    device_id UUID REFERENCES devices(id),
+                    alert_type VARCHAR(100) NOT NULL,
+                    severity VARCHAR(20) NOT NULL,
+                    title VARCHAR(500) NOT NULL,
+                    description TEXT DEFAULT '',
+                    source_ip INET,
+                    destination_ip INET,
+                    source_port SMALLINT,
+                    destination_port SMALLINT,
+                    protocol VARCHAR(20),
+                    mitre_technique VARCHAR(20),
+                    mitre_tactic VARCHAR(100),
+                    evidence JSONB DEFAULT '[]',
+                    recommendations JSONB DEFAULT '[]',
+                    status VARCHAR(50) DEFAULT 'open',
+                    assigned_to UUID,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ,
+                    resolved_at TIMESTAMPTZ
+                );
+
+                CREATE TABLE IF NOT EXISTS investigation_notes (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    alert_id UUID NOT NULL REFERENCES alerts(id),
+                    user_id UUID REFERENCES users(id),
+                    note TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
             """)
 
@@ -923,6 +1037,294 @@ class DatabaseManager:
                 'unique_source_ips': unique_ips,
                 'avg_anomaly_score': round(float(avg_anomaly), 3),
             }
+
+    # ── Organization Operations ──
+
+    def create_organization(self, name: str, slug: str) -> str:
+        org_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("INSERT INTO organizations (id, name, slug, created_at) VALUES (%s,%s,%s,%s)",
+                            (org_id, name, slug, now))
+            else:
+                cur.execute("INSERT INTO organizations (id, name, slug, created_at) VALUES (?,?,?,?)",
+                            (org_id, name, slug, now))
+        return org_id
+
+    def get_organization(self, org_id: str) -> Optional[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM organizations WHERE id = %s", (org_id,))
+            else:
+                cur.execute("SELECT * FROM organizations WHERE id = ?", (org_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    # ── Device Operations ──
+
+    def register_device(self, hostname: str, ip_address: str, os_type: str = "unknown", org_id: str = None) -> str:
+        device_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute(
+                    "INSERT INTO devices (id, organization_id, hostname, ip_address, os_type, last_seen, created_at) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                    (device_id, org_id, hostname, ip_address, os_type, now, now)
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO devices (id, organization_id, hostname, ip_address, os_type, last_seen, created_at) VALUES (?,?,?,?,?,?,?)",
+                    (device_id, org_id, hostname, ip_address, os_type, now, now)
+                )
+        return device_id
+
+    def get_devices(self, org_id: str = None) -> List[Dict]:
+        with self._cursor() as cur:
+            if org_id:
+                if USE_POSTGRESQL:
+                    cur.execute("SELECT * FROM devices WHERE organization_id = %s ORDER BY last_seen DESC", (org_id,))
+                else:
+                    cur.execute("SELECT * FROM devices WHERE organization_id = ? ORDER BY last_seen DESC", (org_id,))
+            else:
+                cur.execute("SELECT * FROM devices ORDER BY last_seen DESC")
+            return [dict(row) for row in cur.fetchall()]
+
+    def update_device_last_seen(self, device_id: str):
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("UPDATE devices SET last_seen = %s WHERE id = %s", (now, device_id))
+            else:
+                cur.execute("UPDATE devices SET last_seen = ? WHERE id = ?", (now, device_id))
+
+    def update_device_risk_score(self, device_id: str, risk_score: float):
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("UPDATE devices SET risk_score = %s WHERE id = %s", (risk_score, device_id))
+            else:
+                cur.execute("UPDATE devices SET risk_score = ? WHERE id = ?", (risk_score, device_id))
+
+    # ── Alert Operations ──
+
+    def create_alert(self, alert_type: str, severity: str, title: str, description: str = "",
+                     source_ip: str = "", dest_ip: str = "", source_port: int = 0, dest_port: int = 0,
+                     protocol: str = "", mitre_technique: str = "", mitre_tactic: str = "",
+                     evidence: list = None, recommendations: list = None,
+                     log_id: str = None, device_id: str = None, org_id: str = None) -> str:
+        alert_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""
+                    INSERT INTO alerts (id, organization_id, log_id, device_id, alert_type, severity, title, description,
+                        source_ip, destination_ip, source_port, destination_port, protocol, mitre_technique, mitre_tactic,
+                        evidence, recommendations, status, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (alert_id, org_id, log_id, device_id, alert_type, severity, title, description,
+                      source_ip, dest_ip, source_port, dest_port, protocol, mitre_technique, mitre_tactic,
+                      json.dumps(evidence or []), json.dumps(recommendations or []), 'open', now))
+            else:
+                cur.execute("""
+                    INSERT INTO alerts (id, organization_id, log_id, device_id, alert_type, severity, title, description,
+                        source_ip, destination_ip, source_port, destination_port, protocol, mitre_technique, mitre_tactic,
+                        evidence, recommendations, status, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (alert_id, org_id, log_id, device_id, alert_type, severity, title, description,
+                      source_ip, dest_ip, source_port, dest_port, protocol, mitre_technique, mitre_tactic,
+                      json.dumps(evidence or []), json.dumps(recommendations or []), 'open', now))
+        return alert_id
+
+    def get_alerts(self, org_id: str = None, status: str = None, severity: str = None, limit: int = 100) -> List[Dict]:
+        with self._cursor() as cur:
+            conditions = []
+            params = []
+            if org_id:
+                conditions.append("organization_id = %s" if USE_POSTGRESQL else "organization_id = ?")
+                params.append(org_id)
+            if status:
+                conditions.append("status = %s" if USE_POSTGRESQL else "status = ?")
+                params.append(status)
+            if severity:
+                conditions.append("severity = %s" if USE_POSTGRESQL else "severity = ?")
+                params.append(severity)
+
+            where = " WHERE " + " AND ".join(conditions) if conditions else ""
+            query = f"SELECT * FROM alerts{where} ORDER BY created_at DESC LIMIT {'%s' if USE_POSTGRESQL else '?'}"
+            params.append(limit)
+
+            cur.execute(query, tuple(params))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_alert(self, alert_id: str) -> Optional[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM alerts WHERE id = %s", (alert_id,))
+            else:
+                cur.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def update_alert_status(self, alert_id: str, status: str, assigned_to: str = None):
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                if assigned_to:
+                    cur.execute("UPDATE alerts SET status = %s, assigned_to = %s, updated_at = %s, resolved_at = CASE WHEN %s = 'resolved' THEN %s ELSE resolved_at END WHERE id = %s",
+                                (status, assigned_to, now, now, now, alert_id))
+                else:
+                    cur.execute("UPDATE alerts SET status = %s, updated_at = %s, resolved_at = CASE WHEN %s = 'resolved' THEN %s ELSE resolved_at END WHERE id = %s",
+                                (status, now, now, now, alert_id))
+            else:
+                if assigned_to:
+                    cur.execute("UPDATE alerts SET status = ?, assigned_to = ?, updated_at = ?, resolved_at = CASE WHEN ? = 'resolved' THEN ? ELSE resolved_at END WHERE id = ?",
+                                (status, assigned_to, now, now, now, alert_id))
+                else:
+                    cur.execute("UPDATE alerts SET status = ?, updated_at = ?, resolved_at = CASE WHEN ? = 'resolved' THEN ? ELSE resolved_at END WHERE id = ?",
+                                (status, now, now, now, alert_id))
+
+    def get_alerts_by_device(self, device_id: str, limit: int = 50) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM alerts WHERE device_id = %s ORDER BY created_at DESC LIMIT %s", (device_id, limit))
+            else:
+                cur.execute("SELECT * FROM alerts WHERE device_id = ? ORDER BY created_at DESC LIMIT ?", (device_id, limit))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_alert_stats(self) -> Dict[str, Any]:
+        with self._cursor() as cur:
+            cur.execute("SELECT COUNT(*) as total FROM alerts")
+            row = cur.fetchone()
+            total = row['total'] if USE_POSTGRESQL else row[0]
+
+            cur.execute("SELECT severity, COUNT(*) as count FROM alerts GROUP BY severity")
+            by_severity = {row['severity']: row['count'] if USE_POSTGRESQL else row[1] for row in cur.fetchall()}
+
+            cur.execute("SELECT status, COUNT(*) as count FROM alerts GROUP BY status")
+            by_status = {row['status']: row['count'] if USE_POSTGRESQL else row[1] for row in cur.fetchall()}
+
+            cur.execute("SELECT alert_type, COUNT(*) as count FROM alerts GROUP BY alert_type ORDER BY count DESC")
+            by_type = {row['alert_type']: row['count'] if USE_POSTGRESQL else row[1] for row in cur.fetchall()}
+
+            return {'total': total, 'by_severity': by_severity, 'by_status': by_status, 'by_type': by_type}
+
+    # ── Investigation Notes ──
+
+    def add_investigation_note(self, alert_id: str, user_id: str, note: str) -> str:
+        note_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("INSERT INTO investigation_notes (id, alert_id, user_id, note, created_at) VALUES (%s,%s,%s,%s,%s)",
+                            (note_id, alert_id, user_id, note, now))
+            else:
+                cur.execute("INSERT INTO investigation_notes (id, alert_id, user_id, note, created_at) VALUES (?,?,?,?,?)",
+                            (note_id, alert_id, user_id, note, now))
+        return note_id
+
+    def get_investigation_notes(self, alert_id: str) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM investigation_notes WHERE alert_id = %s ORDER BY created_at", (alert_id,))
+            else:
+                cur.execute("SELECT * FROM investigation_notes WHERE alert_id = ? ORDER BY created_at", (alert_id,))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_uploaded_log_by_id(self, log_id: str) -> Optional[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM uploaded_logs WHERE id = %s", (log_id,))
+            else:
+                cur.execute("SELECT * FROM uploaded_logs WHERE id = ?", (log_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def get_threat_detections_filtered(self, severity: str = None, threat_type: str = None,
+                                       source_ip: str = None, limit: int = 100) -> List[Dict]:
+        conditions = []
+        params = []
+        if severity:
+            conditions.append("severity = %s" if USE_POSTGRESQL else "severity = ?")
+            params.append(severity)
+        if threat_type:
+            conditions.append("threat_type = %s" if USE_POSTGRESQL else "threat_type = ?")
+            params.append(threat_type)
+        if source_ip:
+            conditions.append("source_ip = %s" if USE_POSTGRESQL else "source_ip = ?")
+            params.append(source_ip)
+
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        limit_placeholder = "%s" if USE_POSTGRESQL else "?"
+        query = f"SELECT * FROM threat_detections{where} ORDER BY detection_time DESC LIMIT {limit_placeholder}"
+        params.append(limit)
+
+        with self._cursor() as cur:
+            cur.execute(query, tuple(params))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_threats_by_ip(self, ip: str, limit: int = 100) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM threat_detections WHERE source_ip = %s OR dest_ip = %s ORDER BY detection_time DESC LIMIT %s", (ip, ip, limit))
+            else:
+                cur.execute("SELECT * FROM threat_detections WHERE source_ip = ? OR dest_ip = ? ORDER BY detection_time DESC LIMIT ?", (ip, ip, limit))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_events_by_ip(self, ip: str, limit: int = 100) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM log_events WHERE source_ip = %s OR dest_ip = %s ORDER BY timestamp DESC LIMIT %s", (ip, ip, limit))
+            else:
+                cur.execute("SELECT * FROM log_events WHERE source_ip = ? OR dest_ip = ? ORDER BY timestamp DESC LIMIT ?", (ip, ip, limit))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_threat_summary_full(self) -> Dict[str, Any]:
+        summary = self.get_threat_summary()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT source_ip, COUNT(*) as count FROM threat_detections WHERE source_ip != '' GROUP BY source_ip ORDER BY count DESC LIMIT 10")
+            else:
+                cur.execute("SELECT source_ip, COUNT(*) as count FROM threat_detections WHERE source_ip != '' GROUP BY source_ip ORDER BY count DESC LIMIT 10")
+            top_ips = [{"ip": row['source_ip'], "count": row['count']} for row in cur.fetchall()]
+
+        by_severity = summary.get('by_severity', {})
+        critical = by_severity.get('CRITICAL', 0)
+        high = by_severity.get('HIGH', 0)
+        total = summary.get('total', 0)
+        if critical > 0:
+            risk_level = "CRITICAL"
+        elif high >= 3:
+            risk_level = "HIGH"
+        elif high > 0 or total > 5:
+            risk_level = "MEDIUM"
+        else:
+            risk_level = "LOW"
+
+        return {
+            'total': total,
+            'by_severity': by_severity,
+            'by_type': summary.get('by_type', {}),
+            'top_source_ips': top_ips,
+            'risk_level': risk_level,
+        }
+
+    def get_latest_anomaly_score(self, log_id: str = None) -> Optional[Dict]:
+        with self._cursor() as cur:
+            if log_id:
+                if USE_POSTGRESQL:
+                    cur.execute("SELECT * FROM anomaly_scores WHERE log_id = %s ORDER BY analysis_time DESC LIMIT 1", (log_id,))
+                else:
+                    cur.execute("SELECT * FROM anomaly_scores WHERE log_id = ? ORDER BY analysis_time DESC LIMIT 1", (log_id,))
+            else:
+                cur.execute("SELECT * FROM anomaly_scores ORDER BY analysis_time DESC LIMIT 1")
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def get_total_reports(self) -> int:
+        with self._cursor() as cur:
+            cur.execute("SELECT COUNT(*) as cnt FROM reports")
+            row = cur.fetchone()
+            return row['cnt'] if USE_POSTGRESQL else row[0]
 
     def close(self):
         if self.conn:
