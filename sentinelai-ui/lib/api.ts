@@ -316,3 +316,53 @@ export async function getDashboardStatsAPI() {
   const res = await api.get('/api/dashboard/stats');
   return res.data;
 }
+
+// ── Alerts ──
+export async function getAlertsAPI(params?: { severity?: string; status?: string; limit?: number }) {
+  const queryParams = new URLSearchParams();
+  if (params?.severity) queryParams.set('severity', params.severity);
+  if (params?.status) queryParams.set('status', params.status);
+  if (params?.limit) queryParams.set('limit', String(params.limit));
+  const res = await api.get(`/api/alerts?${queryParams.toString()}`);
+  return res.data;
+}
+
+export async function getAlertStatsAPI() {
+  const res = await api.get('/api/alerts/stats');
+  return res.data;
+}
+
+export async function updateAlertStatusAPI(alertId: string, status: string, assignedTo?: string) {
+  const res = await api.post(`/api/alerts/${alertId}/status`, { status, assigned_to: assignedTo });
+  return res.data;
+}
+
+// ── Incidents ──
+export async function getIncidentsAPI(params?: { severity?: string; status?: string; limit?: number }) {
+  const queryParams = new URLSearchParams();
+  if (params?.severity) queryParams.set('severity', params.severity);
+  if (params?.status) queryParams.set('status', params.status);
+  if (params?.limit) queryParams.set('limit', String(params.limit));
+  const res = await api.get(`/api/incidents?${queryParams.toString()}`);
+  return res.data;
+}
+
+export async function getIncidentStatsAPI() {
+  const res = await api.get('/api/incidents/stats');
+  return res.data;
+}
+
+export async function getIncidentAPI(incidentId: string) {
+  const res = await api.get(`/api/incidents/${incidentId}`);
+  return res.data;
+}
+
+export async function updateIncidentStatusAPI(incidentId: string, status: string, assignedTo?: string) {
+  const res = await api.post(`/api/incidents/${incidentId}/status`, { status, assigned_to: assignedTo });
+  return res.data;
+}
+
+export async function correlateAlertsAPI() {
+  const res = await api.post('/api/incidents/correlate');
+  return res.data;
+}

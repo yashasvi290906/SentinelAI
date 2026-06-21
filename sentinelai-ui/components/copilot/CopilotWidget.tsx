@@ -21,7 +21,7 @@ export default function CopilotWidget() {
     {
       id: "welcome",
       role: "assistant",
-      content: "I'm SentinelAI Copilot. I can explain predictions, recommend actions, and help you understand attack patterns. Try asking:\n\n• \"Why was this predicted as DDoS?\"\n• \"What should I do next?\"\n• \"Show me recent patterns.\"",
+      content: "I'm SentinelAI Copilot. I have access to your real threat detections, alerts, incidents, and device inventory. Ask me about:\n\n• \"Explain incident INC-xxx\" — full RAG analysis\n• \"What are the critical alerts?\" — real-time data\n• \"Investigate 192.168.1.100\" — IP lookup\n• \"What should I do now?\" — response recommendations\n• \"Show MITRE coverage\" — technique mapping",
       timestamp: new Date().toISOString(),
     },
   ]);
@@ -57,9 +57,9 @@ export default function CopilotWidget() {
       const sequence = lastPrediction?.sequence?.map((a) => {
         const map: Record<string, number> = { DDoS: 0, DoS: 1, PortScan: 2, Bot: 3, WebAttack: 4, BruteForce: 5, Infiltration: 6 };
         return map[a] ?? 0;
-      }) ?? [2, 2, 3];
+      }) ?? [];
 
-      const prediction = lastPrediction?.predictedAttack || "DDoS";
+      const prediction = lastPrediction?.predictedAttack || "";
       const response = await copilotAPI(sequence, prediction, input.trim());
 
       const assistantMsg: Message = {

@@ -1170,13 +1170,14 @@ function ThreatRadar() {
     const n = 7;
     const sa = 360 / n;
 
-    predictionHistory.slice(0, 40).forEach((p) => {
+    predictionHistory.slice(0, 40).forEach((p, idx) => {
       const si = ATTACK_SECTORS[p.predictedAttack] ?? 0;
       const base = si * sa + sa / 2;
-      const j = ((p.id.charCodeAt(p.id.length - 1) % 7) - 3) * 3;
-      const angle = base + j;
+      // Use severity score to spread dots within sector (higher score = closer to center)
+      const angleOffset = ((p.severityScore % 20) - 10) * 1.2;
+      const angle = base + angleOffset;
       const sToD: Record<string, number> = { CRITICAL: 15, HIGH: 35, MEDIUM: 55, LOW: 72 };
-      const dist = (sToD[p.riskLevel] || 60) + (p.severityScore % 20);
+      const dist = (sToD[p.riskLevel] || 60) + (idx % 5) * 2;
       out.push({
         id: p.id, angle, dist,
         color: SEV_COLORS[p.riskLevel] || SEV_COLORS.MEDIUM,
@@ -1187,7 +1188,7 @@ function ThreatRadar() {
       });
     });
 
-    events.filter((e) => e.type === "prediction" || e.type === "error").slice(0, 15).forEach((e) => {
+    events.filter((e) => e.type === "prediction" || e.type === "error").slice(0, 15).forEach((e, idx) => {
       const d = e.details as Record<string, unknown> | undefined;
       const atk = (d?.attack_type as string) || "";
       const sev = (d?.severity as string) || "MEDIUM";
@@ -1195,11 +1196,11 @@ function ThreatRadar() {
       const si = ATTACK_SECTORS[atk];
       if (si === undefined) return;
       const base = si * sa + sa / 2;
-      const j = ((e.id.charCodeAt(e.id.length - 1) % 5) - 2) * 4;
+      const angleOffset = ((sc % 20) - 10) * 1.5;
       const sToD: Record<string, number> = { CRITICAL: 12, HIGH: 32, MEDIUM: 52, LOW: 70 };
-      const dist = (sToD[sev] || 55) + (sc % 18);
+      const dist = (sToD[sev] || 55) + (idx % 4) * 3;
       out.push({
-        id: e.id, angle: base + j, dist,
+        id: e.id, angle: base + angleOffset, dist,
         color: SEV_COLORS[sev] || SEV_COLORS.MEDIUM,
         attack: atk, severity: sev, score: sc,
         time: new Date(e.timestamp).toLocaleTimeString("en-US", { hour12: false }),
