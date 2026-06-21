@@ -99,9 +99,12 @@ if (typeof window !== "undefined") {
   systemMonitor.startMonitoring(5000);
   systemMonitor.onMetricsUpdate((metrics) => {
     useSystemStore.setState((prev) => {
+      const p = prev.systemMetrics;
       if (
-        prev.systemMetrics.backendHealth === metrics.backendHealth &&
-        prev.systemMetrics.predictionThroughput === metrics.predictionThroughput
+        p.backendHealth === metrics.backendHealth &&
+        p.predictionThroughput === metrics.predictionThroughput &&
+        p.apiLatency === metrics.apiLatency &&
+        Math.abs(p.systemUptime - metrics.systemUptime) < 1
       ) {
         return prev;
       }

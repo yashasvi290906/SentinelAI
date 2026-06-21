@@ -39,6 +39,12 @@
   --border-medium: rgba(0, 229, 255, 0.15);
   --border-strong: rgba(0, 229, 255, 0.25);
 
+  /* Glass Morphism */
+  --glass-bg: rgba(7, 20, 35, 0.65);
+  --glass-blur: blur(20px);
+  --glass-border: 1px solid rgba(0, 255, 255, 0.08);
+  --glass-shadow: 0 0 10px rgba(0, 255, 255, 0.15), 0 0 20px rgba(0, 255, 255, 0.08);
+
   /* Semantic */
   --primary: #00e5ff;
   --primary-foreground: #020617;
@@ -110,8 +116,51 @@ h1, h2, h3, h4, h5, h6 {
   outline-offset: 2px;
 }
 
-/* Keyframes — only gridScroll is used (CyberBackground inline style) */
+/* Keyframes — CyberBackground animations */
 @keyframes gridScroll {
   0% { transform: translate(0, 0); }
   100% { transform: translate(48px, 48px); }
+}
+
+@keyframes radar-sweep {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes radar-ring {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes scanline {
+  from { top: -10%; }
+  to { top: 110%; }
+}
+
+@keyframes particle-float {
+  0%, 100% { transform: translateY(0); opacity: 0; }
+  20% { opacity: 0.4; }
+  50% { transform: translateY(-30px); opacity: 0.4; }
+  80% { opacity: 0.4; }
+}
+
+@keyframes data-stream {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes bg-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.5; }
+}
+
+/* Responsive Breakpoints */
+@media (max-width: 768px) {
+  .grid-cols-5 { grid-template-columns: repeat(2, 1fr); }
+  .grid-cols-3 { grid-template-columns: 1fr; }
+  .grid-cols-2 { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 1024px) {
+  .grid-cols-5 { grid-template-columns: repeat(3, 1fr); }
 }

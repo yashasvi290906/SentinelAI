@@ -30,6 +30,8 @@ import {
 import Provenance from "@/components/ui/Provenance";
 import Explanation from "@/components/ui/Explanation";
 import GlassCard from "@/components/ui/GlassCard";
+import { AnimatedCounter } from "@/components/ui/AnimatedCounter";
+import { useAnimatedCounter } from "@/hooks/useAnimatedCounter";
 import { geoMercator } from "d3-geo";
 
 /* ─── animation variants ────────────────────────────────────── */
@@ -99,9 +101,9 @@ function MetricRow({
 /*  CARD 1 — Threat Score                                        */
 /* ═══════════════════════════════════════════════════════════════ */
 function ThreatScoreCard({ metrics }: { metrics: DashboardMetrics }) {
-  const score = metrics.threatScore;
+  const score = useAnimatedCounter(metrics.threatScore, 1200);
   const breakdown = metrics.threatBreakdown;
-  const hasData = score > 0;
+  const hasData = metrics.threatScore > 0;
   const color =
     score > 70 ? "var(--accent-red)" : score > 40 ? "var(--accent-amber)" : "var(--accent-green)";
   const label = score > 70 ? "HIGH RISK" : score > 40 ? "ELEVATED" : "SECURE";
@@ -288,8 +290,12 @@ function ModelAgreementCard({ metrics }: { metrics: DashboardMetrics }) {
       ) : (
         <div className="space-y-3">
           <div className="flex items-end gap-2">
-            <span className="text-3xl font-display font-bold" style={{ color: agreementColor }}>
-              {metrics.modelAgreement}%
+            <span style={{ color: agreementColor }}>
+              <AnimatedCounter
+                value={metrics.modelAgreement}
+                suffix="%"
+                className="text-3xl font-display font-bold"
+              />
             </span>
             <span className="text-[10px] font-mono mb-1" style={{ color: "var(--text-muted)" }}>
               agreement
@@ -340,9 +346,10 @@ function PredictionVolumeCard({ metrics }: { metrics: DashboardMetrics }) {
       ) : (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-3xl font-display font-bold" style={{ color: "var(--text-primary)" }}>
-              {total}
-            </span>
+            <AnimatedCounter
+              value={total}
+              className="text-3xl font-display font-bold"
+            />
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: `${trendColor}12` }}>
               <TrendIcon className="w-3 h-3" style={{ color: trendColor }} />
               <span className="text-[10px] font-mono font-bold" style={{ color: trendColor }}>
@@ -382,9 +389,11 @@ function DriftStatusCard({ metrics }: { metrics: DashboardMetrics }) {
       ) : (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-2xl font-display font-bold" style={{ color: "var(--text-primary)" }}>
-              {driftScore}%
-            </span>
+            <AnimatedCounter
+              value={driftScore}
+              suffix="%"
+              className="text-2xl font-display font-bold"
+            />
             <span
               className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold tracking-wider"
               style={{ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.color}30` }}
@@ -432,9 +441,10 @@ function ApiLatencyCard() {
       ) : (
         <div className="space-y-3">
           <div className="flex items-end gap-2">
-            <span className="text-3xl font-display font-bold" style={{ color: "var(--text-primary)" }}>
-              {latency}
-            </span>
+            <AnimatedCounter
+              value={latency}
+              className="text-3xl font-display font-bold"
+            />
             <span className="text-sm font-mono mb-1" style={{ color: "var(--text-muted)" }}>
               ms
             </span>
@@ -489,9 +499,10 @@ function CriticalAlertsCard({ metrics }: { metrics: DashboardMetrics }) {
               </p>
               <div className="flex items-center gap-2">
                 <Flame className="w-4 h-4" style={{ color: "var(--accent-red)" }} />
-                <span className="text-2xl font-display font-bold" style={{ color: "var(--accent-red)" }}>
-                  {metrics.criticalAlerts}
-                </span>
+                <AnimatedCounter
+                  value={metrics.criticalAlerts}
+                  className="text-2xl font-display font-bold"
+                />
               </div>
             </div>
             <div className="w-px h-12" style={{ background: "rgba(0,229,255,0.08)" }} />
@@ -501,9 +512,10 @@ function CriticalAlertsCard({ metrics }: { metrics: DashboardMetrics }) {
               </p>
               <div className="flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4" style={{ color: "var(--accent-amber)" }} />
-                <span className="text-2xl font-display font-bold" style={{ color: "var(--accent-amber)" }}>
-                  {metrics.highAlerts}
-                </span>
+                <AnimatedCounter
+                  value={metrics.highAlerts}
+                  className="text-2xl font-display font-bold"
+                />
               </div>
             </div>
           </div>
@@ -1446,10 +1458,8 @@ function LiveEventsCard() {
 /*  MAIN DASHBOARD                                               */
 /* ═══════════════════════════════════════════════════════════════ */
 export default function Dashboard() {
-  const metrics = useAnalyticsStore((s) => s.getDashboardMetrics);
+  const m = useAnalyticsStore((s) => s.getDashboardMetrics)();
   const [backendStats, setBackendStats] = useState<SystemStats | null>(null);
-
-  const m = useMemo(() => metrics(), [metrics]);
 
   useEffect(() => {
     statsAPI()

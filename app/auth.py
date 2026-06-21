@@ -11,7 +11,9 @@ from datetime import datetime, timezone, timedelta
 from database import db
 
 # JWT config
-SECRET_KEY = os.environ.get("SECRET_KEY", "sentinelai-dev-secret-change-in-production")
+SECRET_KEY = os.environ.get("SECRET_KEY", "")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable is required")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
@@ -47,7 +49,8 @@ def verify_token(token: str) -> dict | None:
     except JWTError:
         return None
 
-def generate_otp(email: str) -> str:
+def generate_otp(email: str) -> None:
+    """Generate OTP and store hash. OTP must be sent via email, never returned."""
     otp = f"{secrets.randbelow(1000000):06d}"
     hashed = hashlib.sha256(otp.encode()).hexdigest()
     otp_store[email] = {
@@ -55,7 +58,9 @@ def generate_otp(email: str) -> str:
         "expires": datetime.now(timezone.utc) + timedelta(minutes=5),
         "attempts": 0,
     }
-    return otp  # In production, send via email, don't return
+    # In production, send OTP via email here
+    # email_service.send_otp(email, otp)
+    return None
 
 def verify_otp(email: str, otp: str) -> bool:
     if email not in otp_store:
@@ -74,12 +79,13 @@ def verify_otp(email: str, otp: str) -> bool:
         return True
     return False
 
-def check_rate_limit(ip: str, max_requests: int = 60, window: int = 60) -> bool:
+def check_rate_limit(key: str, max_requests: int = 60, window_seconds: int = 60) -> bool:
+    """Returns True if request is allowed, False if rate limited."""
     now = time.time()
-    rate_limit_store[ip] = [t for t in rate_limit_store[ip] if now - t < window]
-    if len(rate_limit_store[ip]) >= max_requests:
+    rate_limit_store[key] = [t for t in rate_limit_store[key] if now - t < window_seconds]
+    if len(rate_limit_store[key]) >= max_requests:
         return False
-    rate_limit_store[ip].append(now)
+    rate_limit_store[key].append(now)
     return True
 
 def log_audit(user: str, action: str, details: str = ""):
@@ -102,7 +108,12 @@ def register_user(email: str, password: str, name: str) -> dict | None:
     if not success:
         return None
     log_audit(email, "register", f"New user registered: {email}")
-    return {"email": email, "name": name, "hashed_password": hashed, "created_at": datetime.now(timezone.utc).isoformat(), "role": "analyst"}
+    return {
+        "email": email,
+        "name": name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "role": "analyst"
+    }
 
 def authenticate_user(email: str, password: str) -> dict | None:
     row = db.get_user_by_email(email)
@@ -114,4 +125,9 @@ def authenticate_user(email: str, password: str) -> dict | None:
         log_audit(email, "login_failed", "Invalid credentials")
         return None
     log_audit(email, "login_success", "User authenticated")
-    return {"email": user["email"], "name": user["name"], "hashed_password": user["password_hash"], "created_at": user["created_at"], "role": user["role"]}
+    return {
+        "email": user["email"],
+        "name": user["name"],
+        "role": user["role"],
+        "created_at": user["created_at"]
+    }

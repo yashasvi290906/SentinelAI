@@ -97,7 +97,8 @@ export default function CopilotWidget() {
       {/* Floating button */}
       <motion.button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full flex items-center justify-center shadow-lg"
+        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full flex items-center justify-center shadow-lg focus:outline-none focus:ring-2 focus:ring-cyan-400/50 focus:ring-offset-2 focus:ring-offset-transparent"
+        aria-label="AI Copilot"
         style={{
           background: "linear-gradient(135deg, var(--accent-cyan), #00B8D4)",
           boxShadow: "0 0 30px rgba(0,229,255,0.3)",
@@ -121,6 +122,8 @@ export default function CopilotWidget() {
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
             className="fixed bottom-24 right-6 z-50 w-[420px] h-[560px] rounded-2xl overflow-hidden flex flex-col"
+            role="dialog"
+            aria-label="AI Copilot"
             style={{
               background: "rgba(8,20,32,0.95)",
               backdropFilter: "blur(24px)",
@@ -307,7 +310,8 @@ export default function CopilotWidget() {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                   placeholder="Ask about attacks, predictions, or actions..."
-                  className="flex-1 px-4 py-2.5 rounded-xl text-xs font-mono outline-none"
+                  aria-label="Message input"
+                  className="flex-1 px-4 py-2.5 rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-cyan-400/50 focus:ring-offset-2 focus:ring-offset-transparent"
                   style={{
                     background: "rgba(0,229,255,0.03)",
                     border: "1px solid rgba(0,229,255,0.1)",

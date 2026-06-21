@@ -19,12 +19,13 @@ interface TickerItem {
 }
 
 export default function LiveActivityTicker() {
-  const events = useEventStore((s) => s.events);
+  const eventCount = useEventStore((s) => s.events.length);
+  const allEvents = useEventStore((s) => s.events);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [paused, setPaused] = useState(false);
 
   const items: TickerItem[] = useMemo(() => {
-    return events.slice(0, 20).map((e) => {
+    return allEvents.slice(0, 20).map((e) => {
       const d = e.details as Record<string, unknown> | undefined;
       const sev = (d?.severity as string) || "MEDIUM";
       return {
@@ -34,7 +35,7 @@ export default function LiveActivityTicker() {
         color: severityColor[sev] || severityColor.MEDIUM,
       };
     });
-  }, [events]);
+  }, [eventCount, allEvents]);
 
   useEffect(() => {
     if (paused || !scrollRef.current) return;
@@ -57,6 +58,8 @@ export default function LiveActivityTicker() {
   return (
     <div
       className="w-full overflow-hidden border-b"
+      aria-live="polite"
+      aria-label="Live activity feed"
       style={{
         background: "rgba(0,8,20,0.6)",
         borderColor: "rgba(0,229,255,0.06)",

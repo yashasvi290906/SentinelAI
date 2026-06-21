@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { motion } from "framer-motion";
 
 interface GlassPanelProps {
   title?: string;
@@ -11,12 +12,15 @@ interface GlassPanelProps {
 
 export default function GlassPanel({ title, icon, children, className = "" }: GlassPanelProps) {
   return (
-    <div
+    <motion.div
+      whileHover={{ y: -2, boxShadow: "0 0 15px rgba(0,255,255,0.2)" }}
+      transition={{ duration: 0.2 }}
       className={`rounded-2xl overflow-hidden ${className}`}
       style={{
-        background: "rgba(8,20,32,0.7)",
-        backdropFilter: "blur(24px)",
-        border: "1px solid rgba(0,229,255,0.08)",
+        background: "var(--glass-bg)",
+        backdropFilter: "var(--glass-blur)",
+        border: "var(--glass-border)",
+        boxShadow: "var(--glass-shadow)",
       }}
     >
       {(title || icon) && (
@@ -38,6 +42,6 @@ export default function GlassPanel({ title, icon, children, className = "" }: Gl
         </div>
       )}
       <div className="p-5">{children}</div>
-    </div>
+    </motion.div>
   );
 }

@@ -30,7 +30,6 @@ export default function RootLayout({
         <meta name="theme-color" content="#0a0a0a" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
       <body className="h-full antialiased font-sora">

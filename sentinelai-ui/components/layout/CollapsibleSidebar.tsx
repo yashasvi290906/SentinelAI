@@ -15,6 +15,7 @@ import {
   Settings,
   ChevronLeft,
   Shield,
+  ShieldAlert,
   HeartPulse,
   MessageCircle,
   ScanSearch,
@@ -24,6 +25,8 @@ import {
   Route,
   Cpu,
   LogOut,
+  Upload,
+  Search,
 } from 'lucide-react';
 import { useGlobalStore } from '@/stores/globalStore';
 import { useSystemStore } from '@/stores/systemStore';
@@ -49,6 +52,10 @@ const secondaryNav = [
   { id: 'reports', label: 'Reports', icon: FileText },
   { id: 'system-health', label: 'System Health', icon: HeartPulse },
   { id: 'system-architecture', label: 'Architecture', icon: Cpu },
+  { id: 'log-upload', label: 'Log Upload', icon: Upload },
+  { id: 'threat-detection', label: 'Threats', icon: ShieldAlert },
+  { id: 'mitre-matrix', label: 'MITRE', icon: Target },
+  { id: 'investigation', label: 'Investigate', icon: Search },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -66,20 +73,20 @@ function NavItem({
   const Icon = item.icon;
 
   return (
-    <button
+      <button
       onClick={onClick}
-      className="relative w-full flex items-center gap-3 p-2.5 rounded-xl transition-all duration-300"
+      className="relative w-full flex items-center gap-3 p-2.5 rounded-xl transition-all duration-300 hover:translate-y-[-1px] hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-cyan-400/50 focus:ring-offset-2 focus:ring-offset-transparent"
+      style={{ transition: "transform 0.2s ease, box-shadow 0.2s ease" }}
+      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 0 12px rgba(0,229,255,0.1)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}
+      aria-current={isActive ? 'page' : undefined}
     >
       {isActive && (
         <motion.div
           layoutId="sidebar-active"
           className="absolute inset-0 rounded-xl"
-          style={{
-            background: 'rgba(0, 229, 255, 0.08)',
-            border: '1px solid rgba(0, 229, 255, 0.2)',
-            boxShadow: '0 0 20px rgba(0, 229, 255, 0.08)',
-          }}
-          transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+          style={{ background: 'rgba(0,229,255,0.08)', border: '1px solid rgba(0,229,255,0.15)' }}
+          transition={{ type: "spring", stiffness: 350, damping: 30 }}
         />
       )}
 
@@ -126,6 +133,8 @@ export default function CollapsibleSidebar() {
       animate={{ width: expanded ? 260 : 72 }}
       transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
       className="flex flex-col h-full overflow-hidden shrink-0"
+      role="navigation"
+      aria-label="Main navigation"
       style={{
         background: 'rgba(8, 20, 32, 0.7)',
         backdropFilter: 'blur(24px)',

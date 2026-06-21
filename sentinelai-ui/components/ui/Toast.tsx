@@ -39,11 +39,11 @@ export default function ToastContainer() {
           return (
             <motion.div
               key={n.id}
-              initial={{ opacity: 0, x: 80, scale: 0.9 }}
+              initial={{ opacity: 0, x: 100, scale: 0.95 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 80, scale: 0.9 }}
-              transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-              className="pointer-events-auto flex items-start gap-3 px-4 py-3 rounded-xl max-w-sm"
+              exit={{ opacity: 0, x: 100, scale: 0.95 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+              className="pointer-events-auto relative flex items-start gap-3 px-4 py-3 rounded-xl max-w-sm overflow-hidden"
               style={{
                 background: "rgba(8,20,32,0.9)",
                 backdropFilter: "blur(24px)",
@@ -66,6 +66,13 @@ export default function ToastContainer() {
               >
                 <X className="w-3 h-3" style={{ color: "var(--text-muted)" }} />
               </button>
+              <motion.div
+                className="absolute bottom-0 left-0 h-0.5"
+                style={{ background: colors.text }}
+                initial={{ width: '100%' }}
+                animate={{ width: '0%' }}
+                transition={{ duration: n.type === 'error' ? 12 : n.type === 'warning' ? 8 : 5, ease: 'linear' }}
+              />
             </motion.div>
           );
         })}

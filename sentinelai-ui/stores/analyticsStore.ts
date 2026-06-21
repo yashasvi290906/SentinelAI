@@ -44,10 +44,19 @@ export type DashboardMetrics = {
   }>;
 };
 
+let _lastPredictionCount = -1;
+let _cachedMetrics: DashboardMetrics | null = null;
+
 export const useAnalyticsStore = create<AnalyticsState>(() => ({
-  getDashboardMetrics: () => {
+  getDashboardMetrics: (): DashboardMetrics => {
     const predStats = usePredictionStore.getState().getStats();
     const system = useSystemStore.getState();
+    const predHistory = usePredictionStore.getState().predictionHistory;
+
+    if (_cachedMetrics && predHistory.length === _lastPredictionCount) {
+      return _cachedMetrics;
+    }
+    _lastPredictionCount = predHistory.length;
 
     // Use the same formula as backend for consistency
     const avgConf = predStats.averageConfidence;
@@ -63,7 +72,7 @@ export const useAnalyticsStore = create<AnalyticsState>(() => ({
       ? Math.min(100, Math.round(confidenceContrib + criticalContrib + conflictContrib + driftContrib))
       : 0;
 
-    return {
+    const result: DashboardMetrics = {
       threatScore,
       threatBreakdown: {
         confidence_contribution: Math.round(confidenceContrib * 10) / 10,
@@ -100,5 +109,8 @@ export const useAnalyticsStore = create<AnalyticsState>(() => ({
         topPredictions: p.topPredictions || [],
       })),
     };
+
+    _cachedMetrics = result;
+    return result;
   },
 }));

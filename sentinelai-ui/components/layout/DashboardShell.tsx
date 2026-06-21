@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode } from "react";
+import React, { ReactNode } from "react";
 import CollapsibleSidebar from "@/components/layout/CollapsibleSidebar";
 import CommandBar from "@/components/layout/CommandBar";
 import CyberBackground from "@/components/layout/CyberBackground";
@@ -14,7 +14,7 @@ interface DashboardShellProps {
   children: ReactNode;
 }
 
-export default function DashboardShell({ children }: DashboardShellProps) {
+export default React.memo(function DashboardShell({ children }: DashboardShellProps) {
   useHealthPolling();
   useWebSocket();
 
@@ -43,4 +43,4 @@ export default function DashboardShell({ children }: DashboardShellProps) {
       <CopilotWidget />
     </div>
   );
-}
+});

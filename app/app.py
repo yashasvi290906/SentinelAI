@@ -1,7 +1,7 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone, timedelta
 from functools import lru_cache
@@ -17,6 +17,15 @@ from starlette.responses import Response
 import json as _json
 import logging
 import random as _random
+import uuid
+
+from services.parser_service import parser
+from services.threat_detection import ThreatDetector
+from services.anomaly_service import anomaly_detector
+from services.mitre_service import mitre_mapper
+from services.report_service import report_generator
+from services.intelligence_service import threat_intel
+from services.gemini_service import gemini_copilot
 
 # Load .env file
 try:
@@ -91,7 +100,7 @@ app.add_middleware(
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 
@@ -102,7 +111,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' *"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         return response
@@ -147,7 +156,7 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     email: str = Field(..., pattern=r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
-    password: str = Field(..., min_length=1, max_length=128)
+    password: str = Field(..., min_length=8, max_length=128)
 
 
 class OTPRequest(BaseModel):
@@ -161,6 +170,22 @@ class OTPVerifyRequest(BaseModel):
 
 class TokenRefreshRequest(BaseModel):
     refresh_token: str
+
+
+class AnomalyAnalysisRequest(BaseModel):
+    log_id: str
+
+
+class ReportRequest(BaseModel):
+    report_type: str = Field(default="technical", pattern=r'^(executive|technical|incident)$')
+    date_from: str = Field(default="")
+    date_to: str = Field(default="")
+    detection_id: str = Field(default="")
+
+
+class IntelLookupRequest(BaseModel):
+    indicator: str = Field(..., max_length=500)
+    indicator_type: str = Field(default="auto", pattern=r'^(auto|ip|domain|hash)$')
 
 
 # =========================
@@ -709,8 +734,10 @@ Attack Distribution: {_json.dumps(context.get('attack_distribution', {}))}
         prompt = f"{system_prompt}\n\nSystem State:\n{context_data}\n\nUser Question: {question}"
 
         async with httpx.AsyncClient(timeout=30) as client:
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            headers = {"x-goog-api-key": api_key}
             resp = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}",
+                url,
                 json={
                     "contents": [{"parts": [{"text": prompt}]}],
                     "generationConfig": {
@@ -718,6 +745,7 @@ Attack Distribution: {_json.dumps(context.get('attack_distribution', {}))}
                         "maxOutputTokens": 1024,
                     },
                 },
+                headers=headers,
             )
 
             if resp.status_code == 200:
@@ -928,55 +956,6 @@ def _build_contextual_response(question: str, context: dict) -> str:
     parts.extend(f"• {i}" for i in attack_info.get('indicators', [])[:3])
     parts.append(f"\nAsk me \"what should I do?\" for response actions, or \"why?\" for detailed reasoning.")
     return "\n".join(parts)
-
-
-@app.post("/copilot")
-async def copilot(data: CopilotRequest):
-    try:
-        seq = data.sequence
-        prediction = data.prediction
-        question = data.question
-
-        # Build context from real system state
-        pred_list = list(prediction_history)
-        comp_list = list(comparison_history)
-        threat = calculate_threat_score()
-
-        attack_dist = {}
-        for p in pred_list:
-            a = p.get("prediction", "Unknown")
-            attack_dist[a] = attack_dist.get(a, 0) + 1
-
-        agree_count = sum(1 for c in comp_list if c.get("agreement", True))
-
-        context = {
-            "prediction": prediction,
-            "confidence": cached_predict(tuple(seq))[1] if seq else 0.0,
-            "severity_score": ATTACK_WEIGHTS.get(prediction, 0.5) * 100,
-            "recent_predictions": pred_list[:10],
-            "total_predictions": len(pred_list),
-            "agreement_rate": agree_count / len(comp_list) if comp_list else 0,
-            "threat_score": threat["score"],
-            "attack_distribution": attack_dist,
-            "threat_factors": threat["breakdown"],
-        }
-
-        explanation = await _gemini_copilot_response(question or f"Analyze {prediction} prediction", context)
-
-        attack_info = ATTACK_KNOWLEDGE.get(prediction, ATTACK_KNOWLEDGE["DDoS"])
-
-        return {
-            "prediction": prediction,
-            "confidence": context["confidence"],
-            "explanation": explanation,
-            "indicators": attack_info["indicators"],
-            "recommendations": attack_info["recommendations"],
-            "kill_chain_stage": attack_info["kill_chain_stage"],
-            "severity_weight": attack_info["severity_weight"],
-        }
-    except Exception as e:
-        logger.error(f"Copilot error: {e}", extra={"module": "api", "action": "error"})
-        return JSONResponse(status_code=500, content={"error": "Copilot failed. Please try again."})
 
 
 # =========================
@@ -1239,10 +1218,10 @@ async def get_drift_analytics():
 # =========================
 # Authentication Routes
 # =========================
-@app.post("/auth/register")
-async def register(data: RegisterRequest):
-    if not check_rate_limit(data.email):
-        return JSONResponse(status_code=429, content={"error": "Too many attempts. Please try again later."})
+@app.post("/auth/signup")
+async def signup(data: RegisterRequest):
+    if not check_rate_limit(f"signup:{data.email}", max_requests=3, window_seconds=300):
+        return JSONResponse(status_code=429, content={"error": "Too many signup attempts. Please try again later."})
     user = register_user(data.email, data.password, data.name)
     if not user:
         return JSONResponse(status_code=409, content={"error": "Email already registered"})
@@ -1252,8 +1231,8 @@ async def register(data: RegisterRequest):
 
 @app.post("/auth/login")
 async def login(data: LoginRequest):
-    if not check_rate_limit(data.email):
-        return JSONResponse(status_code=429, content={"error": "Too many attempts. Please try again later."})
+    if not check_rate_limit(f"login:{data.email}", max_requests=5, window_seconds=60):
+        return JSONResponse(status_code=429, content={"error": "Too many login attempts. Please try again later."})
     user = authenticate_user(data.email, data.password)
     if not user:
         log_structured("warning", "auth", f"Failed login: {data.email}")
@@ -1263,16 +1242,17 @@ async def login(data: LoginRequest):
     refresh = create_refresh_token({"sub": data.email})
     return {"access_token": access, "refresh_token": refresh, "user": {"email": data.email, "name": user["name"]}}
 
-@app.post("/auth/otp/generate")
-async def generate_otp_route(data: OTPRequest):
-    if not check_rate_limit(data.email):
-        return JSONResponse(status_code=429, content={"error": "Too many attempts. Please try again later."})
+@app.post("/auth/send-otp")
+async def send_otp(data: OTPRequest):
+    if not check_rate_limit(f"send-otp:{data.email}", max_requests=3, window_seconds=300):
+        return JSONResponse(status_code=429, content={"error": "Too many OTP requests. Please try again later."})
     otp = generate_otp(data.email)
-    # In production, send via email. For demo, return it.
     return {"message": "OTP sent to email"}
 
-@app.post("/auth/otp/verify")
-async def verify_otp_route(data: OTPVerifyRequest):
+@app.post("/auth/verify-otp")
+async def verify_otp(data: OTPVerifyRequest):
+    if not check_rate_limit(f"verify-otp:{data.email}", max_requests=5, window_seconds=300):
+        return JSONResponse(status_code=429, content={"error": "Too many OTP verification attempts. Please try again later."})
     valid = verify_otp(data.email, data.otp)
     if not valid:
         return JSONResponse(status_code=400, content={"error": "Invalid or expired OTP"})
@@ -1371,11 +1351,13 @@ async def generate_event():
 async def websocket_events(websocket: WebSocket):
     await websocket.accept()
     token = websocket.query_params.get("token")
-    if token:
-        payload = verify_token(token)
-        if not payload:
-            await websocket.close(code=4001, reason="Invalid token")
-            return
+    if not token:
+        await websocket.close(code=4001, reason="Authentication required")
+        return
+    payload = verify_token(token)
+    if not payload:
+        await websocket.close(code=4001, reason="Invalid token")
+        return
     try:
         while True:
             event = await generate_event()
@@ -1383,3 +1365,505 @@ async def websocket_events(websocket: WebSocket):
             await asyncio.sleep(_random.uniform(0.8, 2.5))
     except WebSocketDisconnect:
         pass
+
+
+# =========================
+# In-Memory Stores for Log Analysis
+# =========================
+uploaded_logs: dict = {}
+log_events: dict = {}
+threat_detections_store: list = []
+anomaly_results_store: dict = {}
+reports_store: dict = {}
+threat_detector = ThreatDetector()
+
+
+# =========================
+# Log Upload Endpoint
+# =========================
+@app.post("/api/logs/upload")
+async def upload_log(file: UploadFile = File(...)):
+    try:
+        allowed_exts = {"txt", "csv", "json", "log", "evtx"}
+        ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+        if ext not in allowed_exts:
+            return JSONResponse(status_code=400, content={"error": f"Unsupported file type: .{ext}. Allowed: {', '.join(allowed_exts)}"})
+
+        content = await file.read()
+        if len(content) > 50 * 1024 * 1024:
+            return JSONResponse(status_code=413, content={"error": "File too large. Maximum size: 50MB"})
+
+        text = content.decode("utf-8", errors="replace")
+        events = parser.parse(text, file.filename)
+        event_dicts = [e.to_dict() for e in events]
+
+        log_id = str(uuid.uuid4())
+        detections = threat_detector.analyze_events(event_dicts)
+        detection_dicts = [d.to_dict() for d in detections]
+        threat_detections_store.extend(detection_dicts)
+
+        anomaly_result = anomaly_detector.detect(event_dicts)
+        anomaly_dict = anomaly_result.to_dict()
+
+        uploaded_logs[log_id] = {
+            "id": log_id,
+            "filename": file.filename,
+            "size": len(content),
+            "format": ext,
+            "event_count": len(events),
+            "detection_count": len(detections),
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        log_events[log_id] = event_dicts
+        anomaly_results_store[log_id] = anomaly_dict
+
+        return {
+            "log_id": log_id,
+            "filename": file.filename,
+            "events_parsed": len(events),
+            "threats_detected": len(detections),
+            "anomaly_score": anomaly_dict.get("anomaly_score", 0),
+            "anomaly_risk": anomaly_dict.get("risk_level", "LOW"),
+            "detections": detection_dicts[:20],
+            "anomaly": anomaly_dict,
+        }
+    except Exception as e:
+        logger.error(f"Log upload error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Log upload failed: {str(e)}"})
+
+
+# =========================
+# Log List Endpoint
+# =========================
+@app.get("/api/logs")
+async def list_logs():
+    logs = list(uploaded_logs.values())
+    logs.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
+    return {"logs": logs, "total": len(logs)}
+
+
+# =========================
+# Log Events Endpoint
+# =========================
+@app.get("/api/logs/{log_id}/events")
+async def get_log_events(log_id: str):
+    if log_id not in uploaded_logs:
+        return JSONResponse(status_code=404, content={"error": "Log not found"})
+    events = log_events.get(log_id, [])
+    meta = uploaded_logs[log_id]
+    return {
+        "log": meta,
+        "events": events,
+        "total": len(events),
+    }
+
+
+# =========================
+# Threat Detections Endpoint
+# =========================
+@app.get("/api/threats")
+async def get_threats(
+    severity: str = "",
+    threat_type: str = "",
+    source_ip: str = "",
+    limit: int = 100,
+):
+    results = threat_detections_store
+
+    if severity:
+        results = [d for d in results if d.get("severity", "").upper() == severity.upper()]
+    if threat_type:
+        results = [d for d in results if d.get("threat_type", "") == threat_type]
+    if source_ip:
+        results = [d for d in results if d.get("source_ip", "") == source_ip]
+
+    results = results[:limit]
+    return {"threats": results, "total": len(results)}
+
+
+# =========================
+# Threat Summary Endpoint
+# =========================
+@app.get("/api/threats/summary")
+async def get_threat_summary():
+    all_threats = threat_detections_store
+    by_severity = {}
+    by_type = {}
+    by_ip = {}
+    total = len(all_threats)
+
+    for t in all_threats:
+        sev = t.get("severity", "INFO")
+        by_severity[sev] = by_severity.get(sev, 0) + 1
+
+        ttype = t.get("threat_type", "unknown")
+        by_type[ttype] = by_type.get(ttype, 0) + 1
+
+        ip = t.get("source_ip", "")
+        if ip:
+            if ip not in by_ip:
+                by_ip[ip] = {"ip": ip, "count": 0, "types": set()}
+            by_ip[ip]["count"] += 1
+            by_ip[ip]["types"].add(ttype)
+
+    top_ips = sorted(by_ip.values(), key=lambda x: -x["count"])[:10]
+    for ip_entry in top_ips:
+        ip_entry["types"] = list(ip_entry["types"])
+
+    critical = by_severity.get("CRITICAL", 0)
+    high = by_severity.get("HIGH", 0)
+    if critical > 0:
+        risk_level = "CRITICAL"
+    elif high >= 3:
+        risk_level = "HIGH"
+    elif high > 0 or total > 5:
+        risk_level = "MEDIUM"
+    else:
+        risk_level = "LOW"
+
+    return {
+        "total": total,
+        "by_severity": by_severity,
+        "by_type": by_type,
+        "top_source_ips": top_ips,
+        "risk_level": risk_level,
+    }
+
+
+# =========================
+# Anomaly Detection Endpoint
+# =========================
+@app.post("/api/anomaly/analyze")
+async def analyze_anomaly(data: AnomalyAnalysisRequest):
+    log_id = data.log_id
+    if log_id not in log_events:
+        return JSONResponse(status_code=404, content={"error": "Log not found. Upload a log first."})
+
+    events = log_events[log_id]
+    result = anomaly_detector.detect(events)
+    result_dict = result.to_dict()
+    anomaly_results_store[log_id] = result_dict
+
+    return {
+        "log_id": log_id,
+        "anomaly": result_dict,
+    }
+
+
+# =========================
+# MITRE Mapping Endpoint
+# =========================
+@app.get("/api/mitre")
+async def get_mitre_coverage():
+    tactic_map = {}
+    technique_list = []
+    seen_techniques = set()
+
+    for det in threat_detections_store:
+        ttype = det.get("threat_type", "")
+        mapping = mitre_mapper.map_detection(ttype)
+        if mapping.get("technique_id") == "Unknown":
+            continue
+
+        tactic = mapping.get("tactic", "Unknown")
+        if tactic not in tactic_map:
+            tactic_map[tactic] = {
+                "tactic": tactic,
+                "tactic_id": mapping.get("tactic_id", ""),
+                "techniques": [],
+                "detection_count": 0,
+            }
+        tactic_map[tactic]["detection_count"] += 1
+
+        tech_id = mapping.get("technique_id", "")
+        if tech_id not in seen_techniques:
+            seen_techniques.add(tech_id)
+            tactic_map[tactic]["techniques"].append({
+                "technique_id": tech_id,
+                "technique_name": mapping.get("technique_name", ""),
+                "description": mapping.get("description", ""),
+                "detection": mapping.get("detection", ""),
+                "mitigation": mapping.get("mitigation", ""),
+            })
+
+    return {
+        "tactics": list(tactic_map.values()),
+        "total_techniques": len(seen_techniques),
+        "total_detections": len(threat_detections_store),
+    }
+
+
+# =========================
+# IP Investigation Endpoint
+# =========================
+@app.get("/api/investigate/{ip}")
+async def investigate_ip(ip: str):
+    ip_threats = [d for d in threat_detections_store if d.get("source_ip") == ip or d.get("dest_ip") == ip]
+    ip_events = []
+    for events_list in log_events.values():
+        for ev in events_list:
+            if ev.get("source_ip") == ip or ev.get("dest_ip") == ip:
+                ip_events.append(ev)
+
+    threat_types = {}
+    for t in ip_threats:
+        tt = t.get("threat_type", "unknown")
+        threat_types[tt] = threat_types.get(tt, 0) + 1
+
+    severity_counts = {}
+    for t in ip_threats:
+        s = t.get("severity", "INFO")
+        severity_counts[s] = severity_counts.get(s, 0) + 1
+
+    intel = await threat_intel.lookup_ip(ip)
+
+    return {
+        "ip": ip,
+        "total_threats": len(ip_threats),
+        "total_events": len(ip_events),
+        "threat_types": threat_types,
+        "severity_breakdown": severity_counts,
+        "threat_intel": intel,
+        "recent_threats": ip_threats[:20],
+        "recent_events": ip_events[:50],
+    }
+
+
+# =========================
+# Report Generation Endpoint
+# =========================
+@app.post("/api/reports/generate")
+async def generate_report(data: ReportRequest):
+    try:
+        detections = threat_detections_store
+        events = []
+        for ev_list in log_events.values():
+            events.extend(ev_list)
+
+        if data.report_type == "incident" and data.detection_id:
+            detection = next((d for d in detections if d.get("id") == data.detection_id), None)
+            if not detection:
+                return JSONResponse(status_code=404, content={"error": "Detection not found"})
+            related = [e for e in events if e.get("source_ip") == detection.get("source_ip")]
+            report = report_generator.generate_incident_report(detection, related)
+        elif data.report_type == "executive":
+            stats = {
+                "total_threats": len(detections),
+                "critical_threats": sum(1 for d in detections if d.get("severity") == "CRITICAL"),
+            }
+            anomaly = list(anomaly_results_store.values())[-1] if anomaly_results_store else {}
+            report = report_generator.generate_executive_report(stats, detections, anomaly)
+        else:
+            anomaly = list(anomaly_results_store.values())[-1] if anomaly_results_store else {}
+            report = report_generator.generate_technical_report(events, detections, anomaly)
+
+        report_id = str(uuid.uuid4())
+        report["id"] = report_id
+        reports_store[report_id] = report
+
+        return {
+            "report_id": report_id,
+            "report_type": data.report_type,
+            "report": report,
+        }
+    except Exception as e:
+        logger.error(f"Report generation error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Report generation failed: {str(e)}"})
+
+
+# =========================
+# Report Download Endpoint
+# =========================
+@app.get("/api/reports/{report_id}/download")
+async def download_report(report_id: str, format: str = "json"):
+    if report_id not in reports_store:
+        return JSONResponse(status_code=404, content={"error": "Report not found"})
+
+    report = reports_store[report_id]
+
+    if format == "csv":
+        detections = threat_detections_store
+        csv_content = report_generator.export_csv(detections)
+        return StreamingResponse(
+            iter([csv_content.encode("utf-8")]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=report-{report_id}.csv"},
+        )
+    else:
+        json_content = report_generator.export_json(report)
+        return StreamingResponse(
+            iter([json_content.encode("utf-8")]),
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename=report-{report_id}.json"},
+        )
+
+
+# =========================
+# Threat Intelligence Endpoint
+# =========================
+@app.post("/api/intel/lookup")
+async def intel_lookup(data: IntelLookupRequest):
+    indicator = data.indicator.strip()
+    indicator_type = data.indicator_type
+
+    if indicator_type == "auto":
+        if _is_valid_ip(indicator):
+            indicator_type = "ip"
+        elif _is_valid_hash(indicator):
+            indicator_type = "hash"
+        else:
+            indicator_type = "domain"
+
+    try:
+        if indicator_type == "ip":
+            result = await threat_intel.lookup_ip(indicator)
+        elif indicator_type == "hash":
+            result = await threat_intel.lookup_hash(indicator)
+        else:
+            result = await threat_intel.lookup_domain(indicator)
+
+        return {
+            "indicator": indicator,
+            "type": indicator_type,
+            "result": result,
+        }
+    except Exception as e:
+        logger.error(f"Intel lookup error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Intel lookup failed: {str(e)}"})
+
+
+def _is_valid_ip(s: str) -> bool:
+    parts = s.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        return all(0 <= int(p) <= 255 for p in parts)
+    except ValueError:
+        return False
+
+
+def _is_valid_hash(s: str) -> bool:
+    return len(s) in (32, 40, 64) and all(c in "0123456789abcdefABCDEF" for c in s)
+
+
+# =========================
+# Dashboard Stats Endpoint
+# =========================
+@app.get("/api/dashboard/stats")
+async def get_dashboard_stats():
+    pred_list = list(prediction_history)
+    all_threats = threat_detections_store
+    all_events_count = sum(len(ev) for ev in log_events.values())
+
+    threats_by_severity = {}
+    for t in all_threats:
+        sev = t.get("severity", "INFO")
+        threats_by_severity[sev] = threats_by_severity.get(sev, 0) + 1
+
+    threats_by_type = {}
+    for t in all_threats:
+        tt = t.get("threat_type", "unknown")
+        threats_by_type[tt] = threats_by_type.get(tt, 0) + 1
+
+    unique_source_ips = set()
+    for t in all_threats:
+        ip = t.get("source_ip", "")
+        if ip:
+            unique_source_ips.add(ip)
+
+    anomaly_scores = [a.get("anomaly_score", 0) for a in anomaly_results_store.values()]
+    avg_anomaly = sum(anomaly_scores) / len(anomaly_scores) if anomaly_scores else 0
+
+    attack_dist = {}
+    for p in pred_list:
+        a = p.get("prediction", "Unknown")
+        attack_dist[a] = attack_dist.get(a, 0) + 1
+
+    threat_score = calculate_threat_score()
+
+    return {
+        "total_logs": len(uploaded_logs),
+        "total_events": all_events_count,
+        "total_threats": len(all_threats),
+        "critical_threats": threats_by_severity.get("CRITICAL", 0),
+        "high_threats": threats_by_severity.get("HIGH", 0),
+        "unique_source_ips": len(unique_source_ips),
+        "threats_by_severity": threats_by_severity,
+        "threats_by_type": threats_by_type,
+        "total_predictions": len(pred_list),
+        "attack_distribution": attack_dist,
+        "avg_anomaly_score": round(avg_anomaly, 3),
+        "threat_score": threat_score,
+        "total_reports": len(reports_store),
+    }
+
+
+# =========================
+# Enhanced Copilot Endpoint
+# =========================
+@app.post("/copilot")
+async def enhanced_copilot(data: CopilotRequest):
+    try:
+        question = data.question or f"Analyze {data.prediction} prediction"
+        detections = threat_detections_store
+
+        events_summary = None
+        if log_events:
+            all_ev = []
+            for ev_list in log_events.values():
+                all_ev.extend(ev_list)
+            type_counts = {}
+            ip_counts = {}
+            for ev in all_ev:
+                tt = ev.get("event_type", "unknown")
+                type_counts[tt] = type_counts.get(tt, 0) + 1
+                sip = ev.get("source_ip", "")
+                if sip:
+                    ip_counts[sip] = ip_counts.get(sip, 0) + 1
+            events_summary = {
+                "total": len(all_ev),
+                "by_type": type_counts,
+                "top_ips": sorted([{"ip": k, "count": v} for k, v in ip_counts.items()], key=lambda x: -x["count"])[:10],
+            }
+
+        dashboard_stats = {
+            "total_logs": len(uploaded_logs),
+            "total_events": sum(len(ev) for ev in log_events.values()),
+            "total_threats": len(detections),
+            "critical_threats": sum(1 for d in detections if d.get("severity") == "CRITICAL"),
+            "unique_source_ips": len(set(d.get("source_ip", "") for d in detections if d.get("source_ip"))),
+            "avg_anomaly_score": round(
+                sum(a.get("anomaly_score", 0) for a in anomaly_results_store.values()) / max(len(anomaly_results_store), 1), 3
+            ),
+        }
+
+        anomaly_result = list(anomaly_results_store.values())[-1] if anomaly_results_store else None
+
+        result = await gemini_copilot.chat(
+            question=question,
+            detections=detections,
+            anomaly_result=anomaly_result,
+            events_summary=events_summary,
+            dashboard_stats=dashboard_stats,
+        )
+
+        prediction = data.prediction
+        attack_info = ATTACK_KNOWLEDGE.get(prediction, ATTACK_KNOWLEDGE["DDoS"])
+
+        return {
+            "prediction": prediction,
+            "confidence": cached_predict(tuple(data.sequence))[1] if data.sequence else 0.0,
+            "response": result.get("response", ""),
+            "source": result.get("source", "unknown"),
+            "indicators": attack_info["indicators"],
+            "recommendations": attack_info["recommendations"],
+            "kill_chain_stage": attack_info["kill_chain_stage"],
+            "severity_weight": attack_info["severity_weight"],
+            "detection_summary": {
+                "total": len(detections),
+                "by_type": {d: sum(1 for t in detections if t.get("threat_type") == d) for d in set(t.get("threat_type", "") for t in detections)},
+            },
+        }
+    except Exception as e:
+        logger.error(f"Enhanced copilot error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": "Copilot failed. Please try again."})

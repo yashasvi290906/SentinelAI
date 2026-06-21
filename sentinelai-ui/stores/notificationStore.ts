@@ -29,6 +29,7 @@ interface NotificationState {
   notifications: Notification[];
   addNotification: (n: Omit<Notification, "id" | "timestamp" | "read">) => void;
   addSystemNotification: (title: string, message: string, type?: Notification["type"]) => void;
+  scheduleDismiss: (id: string, type: string) => void;
   markRead: (id: string) => void;
   markAllRead: () => void;
   deleteNotification: (id: string) => void;
@@ -54,10 +55,18 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     const updated = [notification, ...get().notifications].slice(0, MAX_NOTIFICATIONS);
     persist(updated);
     set({ notifications: updated });
+    get().scheduleDismiss(notification.id, notification.type);
   },
 
   addSystemNotification: (title, message, type = "info") => {
     get().addNotification({ type, title, message });
+  },
+
+  scheduleDismiss: (id, type) => {
+    const delay = type === "error" ? 12000 : type === "warning" ? 8000 : 5000;
+    setTimeout(() => {
+      useNotificationStore.getState().deleteNotification(id);
+    }, delay);
   },
 
   markRead: (id) => {

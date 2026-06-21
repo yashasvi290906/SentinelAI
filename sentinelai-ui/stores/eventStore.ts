@@ -19,6 +19,9 @@ function generateId(): string {
   return `evt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+let _pendingEvents: AppEvent[] = [];
+let _rafId: number | null = null;
+
 export const useEventStore = create<EventState>((set) => ({
   events: [],
 
@@ -30,8 +33,17 @@ export const useEventStore = create<EventState>((set) => ({
       message,
       details,
     };
-    set((state) => ({
-      events: [event, ...state.events].slice(0, 500),
-    }));
+    _pendingEvents.push(event);
+    if (_rafId === null) {
+      _rafId = requestAnimationFrame(() => {
+        if (_pendingEvents.length === 0) { _rafId = null; return; }
+        const batch = [..._pendingEvents];
+        _pendingEvents = [];
+        _rafId = null;
+        set((state) => ({
+          events: [...batch.reverse(), ...state.events].slice(0, 500),
+        }));
+      });
+    }
   },
 }));

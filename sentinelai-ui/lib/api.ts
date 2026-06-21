@@ -239,3 +239,80 @@ export async function recommendationsAPI(): Promise<{ recommendations: Recommend
   const res = await api.get("/api/recommendations");
   return res.data;
 }
+
+// ── Log Management ──
+export async function uploadLogAPI(file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await api.post('/api/logs/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return res.data;
+}
+
+export async function getLogsAPI() {
+  const res = await api.get('/api/logs');
+  return res.data;
+}
+
+export async function getLogEventsAPI(logId: string, limit = 1000) {
+  const res = await api.get(`/api/logs/${logId}/events?limit=${limit}`);
+  return res.data;
+}
+
+// ── Threat Detection ──
+export async function getThreatsAPI(params?: { severity?: string; threat_type?: string; source_ip?: string; limit?: number }) {
+  const queryParams = new URLSearchParams();
+  if (params?.severity) queryParams.set('severity', params.severity);
+  if (params?.threat_type) queryParams.set('threat_type', params.threat_type);
+  if (params?.source_ip) queryParams.set('source_ip', params.source_ip);
+  if (params?.limit) queryParams.set('limit', String(params.limit));
+  const res = await api.get(`/api/threats?${queryParams.toString()}`);
+  return res.data;
+}
+
+export async function getThreatSummaryAPI() {
+  const res = await api.get('/api/threats/summary');
+  return res.data;
+}
+
+// ── Anomaly Detection ──
+export async function analyzeAnomalyAPI(logId: string) {
+  const res = await api.post('/api/anomaly/analyze', { log_id: logId });
+  return res.data;
+}
+
+// ── MITRE ──
+export async function getMitreAPI() {
+  const res = await api.get('/api/mitre');
+  return res.data;
+}
+
+// ── Investigation ──
+export async function investigateIPAPI(ip: string) {
+  const res = await api.get(`/api/investigate/${ip}`);
+  return res.data;
+}
+
+// ── Reports ──
+export async function generateReportAPI(reportType: string, logId?: string) {
+  const res = await api.post('/api/reports/generate', { report_type: reportType, log_id: logId });
+  return res.data;
+}
+
+export async function downloadReportAPI(reportId: string, format: string = 'json') {
+  const res = await api.get(`/api/reports/${reportId}/download?format=${format}`, { responseType: 'blob' });
+  return res.data;
+}
+
+// ── Threat Intelligence ──
+export async function lookupIntelAPI(query: string, type: string = 'ip') {
+  const res = await api.post('/api/intel/lookup', { query, type });
+  return res.data;
+}
+
+// ── Dashboard Stats ──
+export async function getDashboardStatsAPI() {
+  const res = await api.get('/api/dashboard/stats');
+  return res.data;
+}

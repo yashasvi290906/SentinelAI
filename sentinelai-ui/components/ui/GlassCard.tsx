@@ -19,11 +19,14 @@ export default function GlassCard({
   return (
     <motion.div
       variants={fadeUp}
-      className={`rounded-2xl p-5 relative overflow-hidden transition-shadow duration-300 ${hoverGlow ? "hover:shadow-[0_0_28px_rgba(0,229,255,0.06)]" : ""} ${className}`}
+      whileHover={{ y: -2, boxShadow: "0 0 15px rgba(0,255,255,0.2)" }}
+      transition={{ duration: 0.2 }}
+      className={`rounded-2xl p-5 relative overflow-hidden ${hoverGlow ? "hover:shadow-[0_0_28px_rgba(0,229,255,0.06)]" : ""} ${className}`}
       style={{
-        background: "rgba(8,20,32,0.7)",
-        backdropFilter: "blur(24px)",
-        border: "1px solid rgba(0,229,255,0.08)",
+        background: "var(--glass-bg)",
+        backdropFilter: "var(--glass-blur)",
+        border: "var(--glass-border)",
+        boxShadow: "var(--glass-shadow)",
       }}
     >
       {children}

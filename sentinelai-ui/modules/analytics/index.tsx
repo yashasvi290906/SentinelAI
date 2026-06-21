@@ -69,7 +69,8 @@ function EmptyChart({ icon: Icon, label }: { icon: React.ElementType; label: str
 }
 
 export default function Analytics() {
-  const metrics = useAnalyticsStore((s) => s.getDashboardMetrics)();
+  const getDashboardMetrics = useAnalyticsStore((s) => s.getDashboardMetrics);
+  const metrics = useMemo(() => getDashboardMetrics(), [getDashboardMetrics]);
   const getStats = usePredictionStore((s) => s.getStats);
   const stats = useMemo(() => getStats(), [getStats]);
   const [backendStats, setBackendStats] = useState<SystemStats | null>(null);
@@ -292,12 +293,17 @@ export default function Analytics() {
                         outerRadius={100}
                         fill="#8884d8"
                         dataKey="value"
+                        animationDuration={800}
+                        animationEasing="ease-out"
                       >
                         {attackDistributionData.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={entry.color} />
                         ))}
                       </Pie>
-                      <RechartsTooltip contentStyle={chartTooltipStyle} />
+                      <RechartsTooltip
+                        contentStyle={chartTooltipStyle}
+                        cursor={{ stroke: 'rgba(0,229,255,0.15)', strokeWidth: 1 }}
+                      />
                       <Legend
                         wrapperStyle={{ color: "var(--text-muted)", fontSize: "12px" }}
                       />
@@ -331,6 +337,10 @@ export default function Analytics() {
                           <stop offset="5%" stopColor="var(--accent-green)" stopOpacity={0.3} />
                           <stop offset="95%" stopColor="var(--accent-green)" stopOpacity={0} />
                         </linearGradient>
+                        <linearGradient id="threatGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#00e5ff" stopOpacity={0.3} />
+                          <stop offset="100%" stopColor="#00e5ff" stopOpacity={0.05} />
+                        </linearGradient>
                       </defs>
                       <CartesianGrid {...CHART_GRID_STYLE} />
                       <XAxis
@@ -344,7 +354,10 @@ export default function Analytics() {
                         fontSize={11}
                         tickLine={false}
                       />
-                      <RechartsTooltip contentStyle={chartTooltipStyle} />
+                      <RechartsTooltip
+                        contentStyle={chartTooltipStyle}
+                        cursor={{ stroke: 'rgba(0,229,255,0.15)', strokeWidth: 1 }}
+                      />
                       <Area
                         type="monotone"
                         dataKey="confidence"
@@ -354,6 +367,8 @@ export default function Analytics() {
                         name="Confidence %"
                         strokeWidth={2}
                         dot={false}
+                        animationDuration={800}
+                        animationEasing="ease-out"
                       />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -396,7 +411,10 @@ export default function Analytics() {
                         tickLine={false}
                         domain={[0, 100]}
                       />
-                      <RechartsTooltip contentStyle={chartTooltipStyle} />
+                      <RechartsTooltip
+                        contentStyle={chartTooltipStyle}
+                        cursor={{ stroke: 'rgba(0,229,255,0.15)', strokeWidth: 1 }}
+                      />
                       <Legend
                         wrapperStyle={{ color: "var(--text-muted)", fontSize: "12px" }}
                       />
@@ -407,6 +425,8 @@ export default function Analytics() {
                         strokeWidth={2}
                         dot={{ r: 3, fill: "var(--accent-cyan)" }}
                         name="Confidence %"
+                        animationDuration={800}
+                        animationEasing="ease-out"
                       />
                     </LineChart>
                   </ResponsiveContainer>

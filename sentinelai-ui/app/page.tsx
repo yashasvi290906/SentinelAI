@@ -6,12 +6,10 @@ import DashboardShell from "@/components/layout/DashboardShell";
 import { useGlobalStore } from "@/stores/globalStore";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 
+import { DashboardSkeleton } from '@/components/ui/DashboardSkeleton';
+
 function LoadingSkeleton() {
-  return (
-    <div className="h-full flex items-center justify-center">
-      <div className="w-6 h-6 border-2 border-[var(--accent-cyan)] border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
+  return <DashboardSkeleton />;
 }
 
 const Dashboard = dynamic(() => import("@/modules/dashboard"), { loading: () => <LoadingSkeleton /> });
@@ -33,6 +31,10 @@ const KillChain = dynamic(() => import("@/modules/killchain"), { loading: () => 
 const DriftAnalytics = dynamic(() => import("@/modules/drift-analytics"), { loading: () => <LoadingSkeleton /> });
 const AttackJourney = dynamic(() => import("@/modules/attack-journey"), { loading: () => <LoadingSkeleton /> });
 const SystemArchitecture = dynamic(() => import("@/modules/system-architecture"), { loading: () => <LoadingSkeleton /> });
+const LogUpload = dynamic(() => import("@/modules/log-upload"), { loading: () => <LoadingSkeleton /> });
+const ThreatDetection = dynamic(() => import("@/modules/threat-detection"), { loading: () => <LoadingSkeleton /> });
+const MitreMatrix = dynamic(() => import("@/modules/mitre-matrix"), { loading: () => <LoadingSkeleton /> });
+const Investigation = dynamic(() => import("@/modules/investigation"), { loading: () => <LoadingSkeleton /> });
 
 const MODULE_MAP: Record<string, { component: React.ComponentType; label: string }> = {
   dashboard: { component: Dashboard, label: "Dashboard" },
@@ -53,6 +55,10 @@ const MODULE_MAP: Record<string, { component: React.ComponentType; label: string
   "drift-analytics": { component: DriftAnalytics, label: "Drift Analytics" },
   "attack-journey": { component: AttackJourney, label: "Attack Journey" },
   "system-architecture": { component: SystemArchitecture, label: "Architecture" },
+  "log-upload": { component: LogUpload, label: "Log Upload" },
+  "threat-detection": { component: ThreatDetection, label: "Threat Detection" },
+  "mitre-matrix": { component: MitreMatrix, label: "MITRE Matrix" },
+  "investigation": { component: Investigation, label: "Investigation" },
   about: { component: About, label: "About" },
 };
 
@@ -64,14 +70,23 @@ export default function Page() {
 
   return (
     <DashboardShell>
+      <a 
+        href="#main-content" 
+        className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-[100] focus:px-4 focus:py-2 focus:bg-cyan-500 focus:text-black focus:rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-400/50"
+      >
+        Skip to main content
+      </a>
       <AnimatePresence mode="wait">
         <motion.div
           key={activeModule}
-          initial={{ opacity: 0, y: 8, filter: "blur(4px)" }}
-          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-          exit={{ opacity: 0, y: -8, filter: "blur(4px)" }}
+          id="main-content"
+          tabIndex={-1}
+          initial={{ opacity: 0, y: 20, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: -15, scale: 0.98 }}
           transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
           className="h-full"
+          style={{ outline: 'none' }}
         >
           <ErrorBoundary moduleName={label} key={activeModule}>
             <ModuleComponent />

@@ -30,24 +30,44 @@ import { useSystemStore } from '@/stores/systemStore';
 import { useAnalyticsStore } from '@/stores/analyticsStore';
 import NotificationCenter from '@/components/layout/NotificationCenter';
 
-const moduleMap: Record<string, { label: string; icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }> }> = {
-  dashboard: { label: 'Dashboard', icon: LayoutDashboard },
-  predictions: { label: 'Predictions', icon: Brain },
-  compare: { label: 'Compare', icon: GitCompareArrows },
-  'live-feed': { label: 'Live Feed', icon: Activity },
-  timeline: { label: 'Timeline', icon: Clock },
-  analytics: { label: 'Analytics', icon: BarChart3 },
-  copilot: { label: 'AI Copilot', icon: MessageCircle },
-  explainability: { label: 'Explainability', icon: ScanSearch },
-  'network-graph': { label: 'Network Graph', icon: Network },
-  killchain: { label: 'Kill Chain', icon: Crosshair },
-  'drift-analytics': { label: 'Drift Analytics', icon: TrendingUp },
-  simulation: { label: 'Simulation Lab', icon: FlaskConical },
-  'threat-intel': { label: 'Threat Intel', icon: Target },
-  reports: { label: 'Reports', icon: FileText },
-  'system-health': { label: 'System Health', icon: HeartPulse },
-  settings: { label: 'Settings', icon: Settings },
+const moduleMap: Record<string, { label: string; description: string; icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }> }> = {
+  dashboard: { label: 'Dashboard', description: 'Security overview and metrics', icon: LayoutDashboard },
+  predictions: { label: 'Predictions', description: 'ML threat predictions', icon: Brain },
+  compare: { label: 'Compare', description: 'Model comparison analysis', icon: GitCompareArrows },
+  'live-feed': { label: 'Live Feed', description: 'Real-time event stream', icon: Activity },
+  timeline: { label: 'Timeline', description: 'Attack timeline view', icon: Clock },
+  analytics: { label: 'Analytics', description: 'Traffic analytics and charts', icon: BarChart3 },
+  copilot: { label: 'AI Copilot', description: 'AI-powered assistant', icon: MessageCircle },
+  explainability: { label: 'Explainability', description: 'Model decision explanations', icon: ScanSearch },
+  'network-graph': { label: 'Network Graph', description: 'Network topology visualization', icon: Network },
+  killchain: { label: 'Kill Chain', description: 'Attack lifecycle mapping', icon: Crosshair },
+  'drift-analytics': { label: 'Drift Analytics', description: 'Data drift detection', icon: TrendingUp },
+  simulation: { label: 'Simulation Lab', description: 'Attack simulation environment', icon: FlaskConical },
+  'threat-intel': { label: 'Threat Intel', description: 'Threat intelligence feeds', icon: Target },
+  reports: { label: 'Reports', description: 'Security report generation', icon: FileText },
+  'system-health': { label: 'System Health', description: 'System performance metrics', icon: HeartPulse },
+  settings: { label: 'Settings', description: 'Application configuration', icon: Settings },
 };
+
+interface SearchResult {
+  id: string;
+  label: string;
+  description: string;
+  category: 'module' | 'setting' | 'action';
+  icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
+  shortcut?: string;
+}
+
+const settingsList: SearchResult[] = [
+  { id: 'settings-theme', label: 'Theme Settings', description: 'Customize UI theme', category: 'setting', icon: Settings },
+  { id: 'settings-notifications', label: 'Notification Preferences', description: 'Alert configuration', category: 'setting', icon: Settings },
+];
+
+const actionsList: SearchResult[] = [
+  { id: 'action-refresh', label: 'Refresh Dashboard', description: 'Reload all data', category: 'action', icon: Activity, shortcut: '⌘R' },
+  { id: 'action-export', label: 'Export Report', description: 'Download security report', category: 'action', icon: FileText, shortcut: '⌘E' },
+  { id: 'action-alert', label: 'Create Alert Rule', description: 'Set up new alert', category: 'action', icon: Target },
+];
 
 const allModules = Object.entries(moduleMap).map(([id, mod]) => ({
   id,
@@ -66,9 +86,30 @@ function getThreatColor(score: number): string {
   return 'var(--accent-green)';
 }
 
+const allSearchResults: SearchResult[] = [
+  ...allModules.map(mod => ({
+    ...mod,
+    description: mod.description || '',
+    category: 'module' as const,
+  })),
+  ...settingsList,
+  ...actionsList,
+];
+
+function searchResults(query: string): SearchResult[] {
+  if (!query.trim()) return allSearchResults;
+  const q = query.toLowerCase();
+  return allSearchResults.filter(r =>
+    r.label.toLowerCase().includes(q) ||
+    r.description.toLowerCase().includes(q) ||
+    r.category.toLowerCase().includes(q)
+  );
+}
+
 export default function CommandBar() {
   const [open, setOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
+  const [query, setQuery] = useState('');
 
   const activeModule = useGlobalStore((s) => s.activeModule);
   const setActiveModule = useGlobalStore((s) => s.setActiveModule);
@@ -80,6 +121,13 @@ export default function CommandBar() {
   const isOnline = backendStatus === 'online';
 
   const activeLabel = moduleMap[activeModule]?.label ?? 'Dashboard';
+
+  const results = useMemo(() => searchResults(query), [query]);
+  const grouped = useMemo(() => ({
+    modules: results.filter(r => r.category === 'module'),
+    settings: results.filter(r => r.category === 'setting'),
+    actions: results.filter(r => r.category === 'action'),
+  }), [results]);
 
   useEffect(() => {
     const tick = () =>
@@ -270,33 +318,114 @@ export default function CommandBar() {
                     placeholder="Search pages, commands..."
                     className="w-full bg-transparent outline-none text-sm font-mono"
                     style={{ color: 'var(--text-primary)' }}
+                    onValueChange={setQuery}
                   />
                 </div>
                 <Command.List className="max-h-80 overflow-y-auto p-2">
                   <Command.Empty className="py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
                     No results found.
                   </Command.Empty>
-                  <Command.Group heading="Modules">
-                    {allModules.map((mod) => {
-                      const Icon = mod.icon;
-                      return (
-                        <Command.Item
-                          key={mod.id}
-                          onSelect={() => selectModule(mod.id)}
-                          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm cursor-pointer"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          <Icon className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
-                          <span className="flex-1">{mod.label}</span>
-                          {activeModule === mod.id && (
-                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(0,229,255,0.1)', color: 'var(--accent-cyan)' }}>
-                              ACTIVE
-                            </span>
-                          )}
-                        </Command.Item>
-                      );
-                    })}
-                  </Command.Group>
+                  {grouped.modules.length > 0 && (
+                    <>
+                      <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider flex items-center gap-2" style={{ color: 'var(--accent-cyan)' }}>
+                        <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ background: 'rgba(0,229,255,0.15)' }}>M</span>
+                        Modules
+                      </div>
+                      <Command.Group>
+                        {grouped.modules.map((result) => {
+                          const Icon = result.icon;
+                          return (
+                            <Command.Item
+                              key={result.id}
+                              onSelect={() => selectModule(result.id)}
+                              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm cursor-pointer"
+                              style={{ color: 'var(--text-secondary)' }}
+                            >
+                              <Icon className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="truncate">{result.label}</span>
+                                  {activeModule === result.id && (
+                                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded shrink-0" style={{ background: 'rgba(0,229,255,0.1)', color: 'var(--accent-cyan)' }}>
+                                      ACTIVE
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>{result.description}</p>
+                              </div>
+                              <span className="ml-auto text-xs font-mono shrink-0" style={{ color: 'rgba(255,255,255,0.2)' }}>
+                                {result.shortcut || '↵'}
+                              </span>
+                            </Command.Item>
+                          );
+                        })}
+                      </Command.Group>
+                    </>
+                  )}
+                  {grouped.settings.length > 0 && (
+                    <>
+                      <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider flex items-center gap-2" style={{ color: 'var(--accent-purple)' }}>
+                        <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ background: 'rgba(124,77,255,0.15)' }}>S</span>
+                        Settings
+                      </div>
+                      <Command.Group>
+                        {grouped.settings.map((result) => {
+                          const Icon = result.icon;
+                          return (
+                            <Command.Item
+                              key={result.id}
+                              onSelect={() => { selectModule('settings'); }}
+                              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm cursor-pointer"
+                              style={{ color: 'var(--text-secondary)' }}
+                            >
+                              <Icon className="w-4 h-4" style={{ color: 'var(--accent-purple)' }} />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="truncate">{result.label}</span>
+                                </div>
+                                <p className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>{result.description}</p>
+                              </div>
+                              <span className="ml-auto text-xs font-mono shrink-0" style={{ color: 'rgba(255,255,255,0.2)' }}>
+                                {result.shortcut || '↵'}
+                              </span>
+                            </Command.Item>
+                          );
+                        })}
+                      </Command.Group>
+                    </>
+                  )}
+                  {grouped.actions.length > 0 && (
+                    <>
+                      <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider flex items-center gap-2" style={{ color: 'var(--accent-amber)' }}>
+                        <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ background: 'rgba(255,176,32,0.15)' }}>A</span>
+                        Actions
+                      </div>
+                      <Command.Group>
+                        {grouped.actions.map((result) => {
+                          const Icon = result.icon;
+                          return (
+                            <Command.Item
+                              key={result.id}
+                              onSelect={() => {}}
+                              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm cursor-pointer"
+                              style={{ color: 'var(--text-secondary)' }}
+                            >
+                              <Icon className="w-4 h-4" style={{ color: 'var(--accent-amber)' }} />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="truncate">{result.label}</span>
+                                </div>
+                                <p className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>{result.description}</p>
+                              </div>
+                              <span className="ml-auto text-xs font-mono shrink-0" style={{ color: 'rgba(255,255,255,0.2)' }}>
+                                {result.shortcut || '↵'}
+                              </span>
+                            </Command.Item>
+                          );
+                        })}
+                      </Command.Group>
+                    </>
+                  )}
                 </Command.List>
               </Command>
             </motion.div>
