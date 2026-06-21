@@ -119,7 +119,6 @@ export default function Analytics() {
 
   const hasAttackData = attackDistributionData.length > 0;
   const hasConfidenceData = confidenceTrendData.length > 0;
-  const hasDriftData = driftTrendData.length > 0;
   const hasPredictionData = predictionTimelineData.length > 0;
 
   return (
@@ -373,52 +372,6 @@ export default function Analytics() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.4 }}
-        >
-          <GlassPanel
-            title="Drift History"
-            icon={<Activity className="w-4 h-4" />}
-            className="h-full flex flex-col"
-          >
-            <div className="flex-1 min-h-0">
-              {hasDriftData ? (
-                <ChartErrorBoundary>
-                  <ResponsiveContainer width="100%" height={280}>
-                    <LineChart data={driftTrendData}>
-                      <CartesianGrid {...CHART_GRID_STYLE} />
-                      <XAxis
-                        dataKey="time"
-                        stroke="var(--text-muted)"
-                        fontSize={11}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        stroke="var(--text-muted)"
-                        fontSize={11}
-                        tickLine={false}
-                      />
-                      <RechartsTooltip contentStyle={chartTooltipStyle} />
-                      <Line
-                        type="monotone"
-                        dataKey="score"
-                        stroke="var(--accent-amber)"
-                        strokeWidth={2}
-                        dot={false}
-                        name="Drift Score"
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </ChartErrorBoundary>
-              ) : (
-                <EmptyChart icon={Activity} label="No drift data yet" />
-              )}
-            </div>
-          </GlassPanel>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.5 }}
         >
           <GlassPanel
             title="Prediction Timeline"
