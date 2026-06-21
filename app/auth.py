@@ -137,3 +137,30 @@ def authenticate_user(email: str, password: str) -> dict | None:
         "role": user["role"],
         "created_at": user["created_at"]
     }
+
+
+# ── RBAC (Role-Based Access Control) ──
+
+ROLES = {
+    "admin": {"level": 4, "permissions": ["read", "write", "delete", "manage_users", "manage_rules", "manage_agents", "export", "configure"]},
+    "soc_manager": {"level": 3, "permissions": ["read", "write", "delete", "manage_rules", "export", "configure"]},
+    "analyst": {"level": 2, "permissions": ["read", "write", "export"]},
+    "viewer": {"level": 1, "permissions": ["read"]},
+}
+
+def check_permission(role: str, permission: str) -> bool:
+    """Check if a role has a specific permission."""
+    role_config = ROLES.get(role.lower(), ROLES["viewer"])
+    return permission in role_config.get("permissions", [])
+
+def require_role(min_role: str):
+    """Decorator/factory that checks minimum role level."""
+    min_level = ROLES.get(min_role.lower(), ROLES["viewer"])["level"]
+    def check(user_role: str) -> bool:
+        user_level = ROLES.get(user_role.lower(), ROLES["viewer"])["level"]
+        return user_level >= min_level
+    return check
+
+def get_user_role(payload: dict) -> str:
+    """Extract role from JWT payload."""
+    return payload.get("role", "viewer")

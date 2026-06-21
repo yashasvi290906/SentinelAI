@@ -25,6 +25,8 @@ from services.mitre_service import mitre_mapper
 from services.report_service import report_generator
 from services.intelligence_service import threat_intel
 from services.gemini_service import gemini_copilot
+from services.normalization_service import event_normalizer, NormalizedEvent
+from services.rule_engine import detection_rule_engine
 
 # Load .env file
 try:
@@ -2050,8 +2052,47 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
     )
     db.insert_log_events(log_id, [event_dict])
 
+    # Normalize event
+    normalized = event_normalizer.normalize(event_dict, source)
+
+    # Run through threat detector (existing ML/rule-based detection)
     detections = threat_detector.analyze_events([event_dict])
     created_alerts = []
+
+    # Run through YAML rule engine
+    try:
+        rule_matches = detection_rule_engine.evaluate(event_dict, db)
+        for match in rule_matches:
+            alert = db.create_alert(
+                alert_type=match.rule_title.lower().replace(" ", "_"),
+                severity=match.severity,
+                title=match.rule_title,
+                description=match.description,
+                source_ip=event_dict.get("source_ip", ""),
+                dest_ip=event_dict.get("dest_ip", ""),
+                source_port=0,
+                dest_port=event_dict.get("dest_port", 0),
+                protocol="",
+                mitre_technique=match.mitre_technique,
+                mitre_tactic=match.mitre_tactic,
+                evidence=[e.get("message", "") for e in match.matched_events[:10]],
+                recommendations=match.recommendations,
+                log_id=log_id,
+            )
+            if alert:
+                created_alerts.append(alert)
+                broadcast_queue.appendleft({
+                    "id": f"rule-{uuid.uuid4().hex[:8]}",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "type": "rule_alert",
+                    "rule_id": match.rule_id,
+                    "rule_title": match.rule_title,
+                    "severity": match.severity,
+                    "match_count": match.match_count,
+                    "source_ip": event_dict.get("source_ip", ""),
+                })
+    except Exception:
+        pass  # Rule engine is optional; don't break ingestion
 
     if detections:
         db.insert_threat_detections(log_id, [d.to_dict() for d in detections])
@@ -2240,14 +2281,51 @@ async def get_incident(incident_id: str):
         return JSONResponse(status_code=404, content={"error": "Incident not found"})
     return incident
 
+# Incident lifecycle states and valid transitions
+INCIDENT_STATES = ["open", "investigating", "contained", "resolved", "closed"]
+INCIDENT_TRANSITIONS = {
+    "open": ["investigating", "closed"],
+    "investigating": ["contained", "resolved", "closed"],
+    "contained": ["investigating", "resolved", "closed"],
+    "resolved": ["closed", "open"],  # Can reopen
+    "closed": ["open"],  # Can reopen
+}
+
 @app.post("/api/incidents/{incident_id}/status")
 async def update_incident_status(incident_id: str, request: Request):
     from database import db
     body = await request.json()
-    status = body.get("status", "open")
+    new_status = body.get("status", "open").lower()
     assigned_to = body.get("assigned_to")
-    db.update_incident_status(incident_id, status, assigned_to)
-    return {"status": "updated"}
+
+    # Validate status
+    if new_status not in INCIDENT_STATES:
+        return JSONResponse(status_code=400, content={"error": f"Invalid status. Must be one of: {', '.join(INCIDENT_STATES)}"})
+
+    # Get current incident to check transition validity
+    incident = db.get_incident(incident_id)
+    if not incident:
+        return JSONResponse(status_code=404, content={"error": "Incident not found"})
+
+    current_status = incident.get("status", "open").lower()
+    valid_transitions = INCIDENT_TRANSITIONS.get(current_status, [])
+
+    if new_status not in valid_transitions:
+        return JSONResponse(status_code=400, content={
+            "error": f"Cannot transition from '{current_status}' to '{new_status}'. Valid transitions: {', '.join(valid_transitions)}",
+            "current_status": current_status,
+            "valid_transitions": valid_transitions,
+        })
+
+    db.update_incident_status(incident_id, new_status, assigned_to)
+
+    # Auto-add note for status change
+    try:
+        db.add_incident_note(incident_id, user_id=None, note=f"Status changed: {current_status} → {new_status}")
+    except Exception:
+        pass
+
+    return {"status": "updated", "previous": current_status, "current": new_status}
 
 @app.get("/api/incidents/{incident_id}/notes")
 async def get_incident_notes(incident_id: str):
