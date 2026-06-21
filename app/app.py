@@ -1962,3 +1962,69 @@ async def add_alert_note(alert_id: str, request: Request):
     note = body.get("note", "")
     note_id = db.add_investigation_note(alert_id, user_id=None, note=note)
     return {"note_id": note_id, "status": "created"}
+
+
+# ── Incident Management ──
+
+@app.get("/api/incidents")
+async def get_incidents(status: str = "", severity: str = "", limit: int = 100):
+    from database import db
+    incidents = db.get_incidents(status=status or None, severity=severity or None, limit=limit)
+    return {"incidents": incidents, "count": len(incidents)}
+
+@app.get("/api/incidents/stats")
+async def get_incident_stats():
+    from database import db
+    return db.get_incident_stats()
+
+@app.get("/api/incidents/{incident_id}")
+async def get_incident(incident_id: str):
+    from database import db
+    incident = db.get_incident(incident_id)
+    if not incident:
+        return JSONResponse(status_code=404, content={"error": "Incident not found"})
+    return incident
+
+@app.post("/api/incidents/{incident_id}/status")
+async def update_incident_status(incident_id: str, request: Request):
+    from database import db
+    body = await request.json()
+    status = body.get("status", "open")
+    assigned_to = body.get("assigned_to")
+    db.update_incident_status(incident_id, status, assigned_to)
+    return {"status": "updated"}
+
+@app.get("/api/incidents/{incident_id}/notes")
+async def get_incident_notes(incident_id: str):
+    from database import db
+    notes = db.get_incident_notes(incident_id)
+    return {"notes": notes}
+
+@app.post("/api/incidents/{incident_id}/notes")
+async def add_incident_note(incident_id: str, request: Request):
+    from database import db
+    body = await request.json()
+    note = body.get("note", "")
+    note_id = db.add_incident_note(incident_id, user_id=None, note=note)
+    return {"note_id": note_id, "status": "created"}
+
+@app.post("/api/incidents/correlate")
+async def correlate_alerts():
+    """Run correlation engine on open alerts to create incidents."""
+    from database import db
+    from services.correlation_service import correlation_engine
+
+    alerts = db.get_alerts(status='open', limit=200)
+    incidents = correlation_engine.correlate(alerts)
+
+    created = []
+    for inc in incidents:
+        inc_id = db.create_incident(
+            title=inc.title, severity=inc.severity, description=inc.description,
+            alert_ids=inc.alert_ids, timeline=inc.timeline, affected_ips=inc.affected_ips,
+            mitre_techniques=inc.mitre_techniques, mitre_tactics=inc.mitre_tactics,
+            recommendations=inc.recommendations, confidence=inc.confidence,
+        )
+        created.append(inc_id)
+
+    return {"correlated": len(created), "incident_ids": created}

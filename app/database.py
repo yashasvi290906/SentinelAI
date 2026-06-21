@@ -270,6 +270,33 @@ class DatabaseManager:
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS incidents (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    status TEXT DEFAULT 'open',
+                    confidence REAL DEFAULT 0.0,
+                    description TEXT DEFAULT '',
+                    alert_ids TEXT DEFAULT '[]',
+                    timeline TEXT DEFAULT '[]',
+                    affected_ips TEXT DEFAULT '[]',
+                    mitre_techniques TEXT DEFAULT '[]',
+                    mitre_tactics TEXT DEFAULT '[]',
+                    recommendations TEXT DEFAULT '[]',
+                    assigned_to TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS incident_notes (
+                    id TEXT PRIMARY KEY,
+                    incident_id TEXT NOT NULL,
+                    user_id TEXT,
+                    note TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (incident_id) REFERENCES incidents(id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_log_events_log_id ON log_events(log_id);
                 CREATE INDEX IF NOT EXISTS idx_log_events_timestamp ON log_events(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_log_events_source_ip ON log_events(source_ip);
@@ -469,6 +496,32 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS investigation_notes (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                     alert_id UUID NOT NULL REFERENCES alerts(id),
+                    user_id UUID REFERENCES users(id),
+                    note TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS incidents (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    title VARCHAR(500) NOT NULL,
+                    severity VARCHAR(20) NOT NULL,
+                    status VARCHAR(50) DEFAULT 'open',
+                    confidence REAL DEFAULT 0.0,
+                    description TEXT DEFAULT '',
+                    alert_ids JSONB DEFAULT '[]',
+                    timeline JSONB DEFAULT '[]',
+                    affected_ips JSONB DEFAULT '[]',
+                    mitre_techniques JSONB DEFAULT '[]',
+                    mitre_tactics JSONB DEFAULT '[]',
+                    recommendations JSONB DEFAULT '[]',
+                    assigned_to UUID,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ
+                );
+
+                CREATE TABLE IF NOT EXISTS incident_notes (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    incident_id UUID NOT NULL REFERENCES incidents(id),
                     user_id UUID REFERENCES users(id),
                     note TEXT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -1229,6 +1282,119 @@ class DatabaseManager:
             else:
                 cur.execute("SELECT * FROM investigation_notes WHERE alert_id = ? ORDER BY created_at", (alert_id,))
             return [dict(row) for row in cur.fetchall()]
+
+    # ── Incident Operations ──
+
+    def create_incident(self, title: str, severity: str, description: str = "",
+                        alert_ids: list = None, timeline: list = None, affected_ips: list = None,
+                        mitre_techniques: list = None, mitre_tactics: list = None,
+                        recommendations: list = None, confidence: float = 0.0) -> str:
+        incident_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""
+                    INSERT INTO incidents (id, title, severity, status, confidence, description,
+                        alert_ids, timeline, affected_ips, mitre_techniques, mitre_tactics,
+                        recommendations, created_at, updated_at)
+                    VALUES (%s,%s,%s,'open',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (incident_id, title, severity, confidence, description,
+                      json.dumps(alert_ids or []), json.dumps(timeline or []),
+                      json.dumps(affected_ips or []), json.dumps(mitre_techniques or []),
+                      json.dumps(mitre_tactics or []), json.dumps(recommendations or []),
+                      now, now))
+            else:
+                cur.execute("""
+                    INSERT INTO incidents (id, title, severity, status, confidence, description,
+                        alert_ids, timeline, affected_ips, mitre_techniques, mitre_tactics,
+                        recommendations, created_at, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (incident_id, title, severity, confidence, description,
+                      json.dumps(alert_ids or []), json.dumps(timeline or []),
+                      json.dumps(affected_ips or []), json.dumps(mitre_techniques or []),
+                      json.dumps(mitre_tactics or []), json.dumps(recommendations or []),
+                      now, now))
+        return incident_id
+
+    def get_incidents(self, status: str = None, severity: str = None, limit: int = 100) -> List[Dict]:
+        with self._cursor() as cur:
+            conditions = []
+            params = []
+            if status:
+                conditions.append(f"status = {'%s' if USE_POSTGRESQL else '?'}")
+                params.append(status)
+            if severity:
+                conditions.append(f"severity = {'%s' if USE_POSTGRESQL else '?'}")
+                params.append(severity)
+
+            where = " WHERE " + " AND ".join(conditions) if conditions else ""
+            limit_q = '%s' if USE_POSTGRESQL else '?'
+            query = f"SELECT * FROM incidents{where} ORDER BY created_at DESC LIMIT {limit_q}"
+            params.append(limit)
+
+            cur.execute(query, tuple(params))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_incident(self, incident_id: str) -> Optional[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM incidents WHERE id = %s", (incident_id,))
+            else:
+                cur.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def update_incident_status(self, incident_id: str, status: str, assigned_to: str = None):
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                if assigned_to:
+                    cur.execute("UPDATE incidents SET status=%s, assigned_to=%s, updated_at=%s WHERE id=%s",
+                                (status, assigned_to, now, incident_id))
+                else:
+                    cur.execute("UPDATE incidents SET status=%s, updated_at=%s WHERE id=%s",
+                                (status, now, incident_id))
+            else:
+                if assigned_to:
+                    cur.execute("UPDATE incidents SET status=?, assigned_to=?, updated_at=? WHERE id=?",
+                                (status, assigned_to, now, incident_id))
+                else:
+                    cur.execute("UPDATE incidents SET status=?, updated_at=? WHERE id=?",
+                                (status, now, incident_id))
+
+    def get_incident_notes(self, incident_id: str) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM incident_notes WHERE incident_id = %s ORDER BY created_at", (incident_id,))
+            else:
+                cur.execute("SELECT * FROM incident_notes WHERE incident_id = ? ORDER BY created_at", (incident_id,))
+            return [dict(row) for row in cur.fetchall()]
+
+    def add_incident_note(self, incident_id: str, user_id: str, note: str) -> str:
+        note_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("INSERT INTO incident_notes (id, incident_id, user_id, note, created_at) VALUES (%s,%s,%s,%s,%s)",
+                            (note_id, incident_id, user_id, note, now))
+            else:
+                cur.execute("INSERT INTO incident_notes (id, incident_id, user_id, note, created_at) VALUES (?,?,?,?,?)",
+                            (note_id, incident_id, user_id, note, now))
+        return note_id
+
+    def get_incident_stats(self) -> Dict[str, Any]:
+        with self._cursor() as cur:
+            cur.execute("SELECT COUNT(*) as total FROM incidents")
+            row = cur.fetchone()
+            total = row['total'] if USE_POSTGRESQL else row[0]
+
+            cur.execute("SELECT severity, COUNT(*) as count FROM incidents GROUP BY severity")
+            by_severity = {row['severity']: row['count'] if USE_POSTGRESQL else row[1] for row in cur.fetchall()}
+
+            cur.execute("SELECT status, COUNT(*) as count FROM incidents GROUP BY status")
+            by_status = {row['status']: row['count'] if USE_POSTGRESQL else row[1] for row in cur.fetchall()}
+
+            return {'total': total, 'by_severity': by_severity, 'by_status': by_status}
 
     def get_uploaded_log_by_id(self, log_id: str) -> Optional[Dict]:
         with self._cursor() as cur:

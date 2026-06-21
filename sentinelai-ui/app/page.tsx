@@ -36,6 +36,7 @@ const LogUpload = dynamic(() => import("@/modules/log-upload"), { loading: () =>
 const ThreatDetection = dynamic(() => import("@/modules/threat-detection"), { loading: () => <LoadingSkeleton /> });
 const MitreMatrix = dynamic(() => import("@/modules/mitre-matrix"), { loading: () => <LoadingSkeleton /> });
 const Investigation = dynamic(() => import("@/modules/investigation"), { loading: () => <LoadingSkeleton /> });
+const Incidents = dynamic(() => import("@/modules/incidents"), { loading: () => <LoadingSkeleton /> });
 
 const MODULE_MAP: Record<string, { component: React.ComponentType; label: string }> = {
   dashboard: { component: Dashboard, label: "Dashboard" },
@@ -60,6 +61,7 @@ const MODULE_MAP: Record<string, { component: React.ComponentType; label: string
   "threat-detection": { component: ThreatDetection, label: "Threat Detection" },
   "mitre-matrix": { component: MitreMatrix, label: "MITRE Matrix" },
   "investigation": { component: Investigation, label: "Investigation" },
+  incidents: { component: Incidents, label: "Incidents" },
   devices: { component: Devices, label: "Devices" },
   about: { component: About, label: "About" },
 };

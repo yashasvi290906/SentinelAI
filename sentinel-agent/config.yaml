@@ -1,0 +1,44 @@
+# SentinelAI Agent Configuration
+server:
+  url: "http://localhost:8000"
+  api_key: ""              # Optional API key for auth
+  timeout: 30
+  retry_count: 3
+  retry_delay: 5
+
+agent:
+  hostname: ""             # Auto-detected if empty
+  device_id: ""            # Auto-generated on first run
+  organization_id: ""      # Set for multi-tenant
+  batch_size: 50
+  flush_interval: 10       # seconds
+
+collection:
+  windows:
+    enabled: true
+    channels:
+      - Security
+      - System
+      - Application
+    event_ids:             # Windows Event IDs to collect
+      - 4625              # Failed login
+      - 4624              # Successful login
+      - 4648              # Explicit credentials
+      - 4720              # User account created
+      - 4726              # User account deleted
+      - 4732              # Member added to local group
+      - 7045              # Service installed
+      - 4688              # Process creation
+      - 4104              # PowerShell script block
+      - 4103              # PowerShell module logging
+      - 5140              # Network share accessed
+      - 5156              # Windows Filtering Platform
+
+  linux:
+    enabled: true
+    log_files:
+      - /var/log/auth.log
+      - /var/log/syslog
+      - /var/log/secure
+      - /var/log/kern.log
+    poll_interval: 5       # seconds

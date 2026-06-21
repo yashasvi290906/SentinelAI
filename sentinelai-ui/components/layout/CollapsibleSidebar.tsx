@@ -57,6 +57,7 @@ const secondaryNav = [
   { id: 'threat-detection', label: 'Threats', icon: ShieldAlert },
   { id: 'mitre-matrix', label: 'MITRE', icon: Target },
   { id: 'investigation', label: 'Investigate', icon: Search },
+  { id: 'incidents', label: 'Incidents', icon: ShieldAlert },
   { id: 'devices', label: 'Devices', icon: Server },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
