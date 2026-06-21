@@ -66,16 +66,24 @@ When explaining threats, include the MITRE technique and tactic."""
         events_summary: Dict = None,
         dashboard_stats: Dict = None,
         conversation_history: List[Dict] = None,
+        alerts: List[Dict] = None,
+        incidents: List[Dict] = None,
+        devices: List[Dict] = None,
+        incident_context: Dict = None,
     ) -> Dict[str, Any]:
-        """Process a copilot question with RAG context."""
+        """Process a copilot question with full RAG context."""
         
         # Build context from real data
-        context = self._build_context(detections, anomaly_result, events_summary, dashboard_stats)
+        context = self._build_context(
+            detections, anomaly_result, events_summary, dashboard_stats,
+            alerts=alerts, incidents=incidents, devices=devices,
+            incident_context=incident_context,
+        )
         
         if self.api_key and HAS_HTTPX:
             return await self._query_gemini(question, context, conversation_history)
         else:
-            return self._intelligent_fallback(question, context, detections or [])
+            return self._intelligent_fallback(question, context, detections or [], incident_context=incident_context)
     
     def _build_context(
         self,
@@ -83,19 +91,89 @@ When explaining threats, include the MITRE technique and tactic."""
         anomaly_result: Dict = None,
         events_summary: Dict = None,
         dashboard_stats: Dict = None,
+        alerts: List[Dict] = None,
+        incidents: List[Dict] = None,
+        devices: List[Dict] = None,
+        incident_context: Dict = None,
     ) -> str:
         """Build RAG context from real analysis data."""
         parts = []
         
+        # ── Specific Incident Context (highest priority) ──
+        if incident_context:
+            inc = incident_context.get("incident", {})
+            parts.append(f"""=== SPECIFIC INCIDENT ANALYSIS ===
+Incident ID: {inc.get('id', 'N/A')}
+Title: {inc.get('title', 'N/A')}
+Severity: {inc.get('severity', 'N/A')}
+Status: {inc.get('status', 'N/A')}
+Description: {inc.get('description', 'N/A')}
+Affected IPs: {', '.join(inc.get('affected_ips', [])) or 'N/A'}
+Kill Chain Stages: {', '.join(inc.get('kill_chain_stages', [])) or 'N/A'}
+Matched Chain: {inc.get('matched_chain', 'None')}
+Confidence: {inc.get('confidence', 0):.0%}
+Timeline ({len(inc.get('timeline', []))} events):""")
+            for t in inc.get("timeline", [])[:15]:
+                parts.append(f"  [{t.get('severity', '')}] {t.get('timestamp', '')[:19]} — {t.get('title', '')} ({t.get('type', '')})")
+            
+            related = incident_context.get("related_alerts", [])
+            if related:
+                parts.append(f"\nRelated Alerts ({len(related)}):")
+                for a in related[:10]:
+                    parts.append(f"  - [{a.get('severity')}] {a.get('alert_type', '')}: {a.get('title', '')[:100]}")
+                    parts.append(f"    Source: {a.get('source_ip', 'N/A')} → {a.get('dest_ip', 'N/A')}:{a.get('dest_port', 'N/A')}")
+                    parts.append(f"    MITRE: {a.get('mitre_technique', 'N/A')} ({a.get('mitre_tactic', 'N/A')})")
+            
+            notes = incident_context.get("notes", [])
+            if notes:
+                parts.append(f"\nInvestigation Notes ({len(notes)}):")
+                for n in notes[:5]:
+                    parts.append(f"  - {n.get('created_at', '')[:19]}: {n.get('note', '')[:200]}")
+        
+        # ── Dashboard Stats ──
         if dashboard_stats:
-            parts.append(f"""DASHBOARD STATISTICS:
+            parts.append(f"""
+DASHBOARD STATISTICS:
 - Total logs uploaded: {dashboard_stats.get('total_logs', 0)}
 - Total events parsed: {dashboard_stats.get('total_events', 0)}
 - Total threats detected: {dashboard_stats.get('total_threats', 0)}
 - Critical/High threats: {dashboard_stats.get('critical_threats', 0)}
 - Unique source IPs: {dashboard_stats.get('unique_source_ips', 0)}
-- Average anomaly score: {dashboard_stats.get('avg_anomaly_score', 0)}""")
+- Average anomaly score: {dashboard_stats.get('avg_anomaly_score', 0)}
+- Total alerts: {dashboard_stats.get('total_alerts', 0)}
+- Open alerts: {dashboard_stats.get('open_alerts', 0)}
+- Critical alerts: {dashboard_stats.get('critical_alerts', 0)}
+- Total incidents: {dashboard_stats.get('total_incidents', 0)}
+- Open incidents: {dashboard_stats.get('open_incidents', 0)}""")
         
+        # ── Alerts ──
+        if alerts:
+            parts.append(f"\nALERTS ({len(alerts)} total):")
+            sev_counts = {}
+            for a in alerts:
+                s = a.get('severity', 'INFO')
+                sev_counts[s] = sev_counts.get(s, 0) + 1
+            parts.append(f"By severity: {json.dumps(sev_counts)}")
+            for a in alerts[:10]:
+                parts.append(f"- [{a.get('severity')}] {a.get('alert_type', '')}: {a.get('title', '')[:100]}")
+                parts.append(f"  Source: {a.get('source_ip', 'N/A')} → {a.get('dest_ip', 'N/A')}:{a.get('dest_port', 'N/A')}")
+                parts.append(f"  MITRE: {a.get('mitre_technique', 'N/A')} ({a.get('mitre_tactic', 'N/A')})")
+        
+        # ── Incidents ──
+        if incidents:
+            parts.append(f"\nINCIDENTS ({len(incidents)} total):")
+            for inc in incidents[:10]:
+                parts.append(f"- [{inc.get('severity')}] {inc.get('title', '')[:120]}")
+                parts.append(f"  Status: {inc.get('status', 'N/A')} | Chain: {inc.get('matched_chain', 'N/A')}")
+                parts.append(f"  Affected IPs: {', '.join(inc.get('affected_ips', [])[:5]) or 'N/A'}")
+        
+        # ── Devices ──
+        if devices:
+            parts.append(f"\nREGISTERED DEVICES ({len(devices)}):")
+            for d in devices[:10]:
+                parts.append(f"- {d.get('hostname', 'N/A')} ({d.get('os_type', 'N/A')}) — Last seen: {d.get('last_seen', 'N/A')[:19]}")
+        
+        # ── Detections ──
         if detections:
             parts.append(f"\nTHREAT DETECTIONS ({len(detections)} total):")
             severity_counts = {}
@@ -110,6 +188,7 @@ When explaining threats, include the MITRE technique and tactic."""
                 parts.append(f"  MITRE: {d.get('mitre_technique', 'N/A')} ({d.get('mitre_tactic', 'N/A')})")
                 parts.append(f"  Confidence: {d.get('confidence', 0):.0%}")
         
+        # ── Anomaly ──
         if anomaly_result:
             parts.append(f"""
 ANOMALY ANALYSIS:
@@ -117,6 +196,7 @@ ANOMALY ANALYSIS:
 - Explanation: {anomaly_result.get('explanation', 'N/A')}
 - Top anomalous features: {json.dumps(dict(list(anomaly_result.get('feature_scores', {}).items())[:5]))}""")
         
+        # ── Events ──
         if events_summary:
             parts.append(f"""
 EVENT SUMMARY:
@@ -184,9 +264,49 @@ EVENT SUMMARY:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
     
-    def _intelligent_fallback(self, question: str, context: str, detections: List[Dict]) -> Dict[str, Any]:
+    def _intelligent_fallback(self, question: str, context: str, detections: List[Dict], incident_context: Dict = None) -> Dict[str, Any]:
         """Intelligent local fallback when Gemini is not available."""
         q = question.lower().strip()
+        
+        # ── Incident-specific analysis (highest priority) ──
+        if incident_context:
+            inc = incident_context.get("incident", {})
+            related = incident_context.get("related_alerts", [])
+            
+            if any(w in q for w in ['explain', 'what', 'why', 'how', 'tell', 'describe', 'summary', 'summarize']):
+                response = f"**Incident Analysis: {inc.get('title', 'Unknown')}**\n\n"
+                response += f"**Severity:** {inc.get('severity', 'N/A')} | **Status:** {inc.get('status', 'N/A')}\n"
+                response += f"**Confidence:** {inc.get('confidence', 0):.0%}\n"
+                response += f"**Kill Chain:** {' → '.join(inc.get('kill_chain_stages', []))}\n\n"
+                response += f"**Description:** {inc.get('description', 'N/A')}\n\n"
+                
+                if inc.get('matched_chain'):
+                    response += f"**Attack Pattern:** {inc.get('matched_chain', '').replace('_', ' ').title()}\n\n"
+                
+                response += f"**Timeline ({len(inc.get('timeline', []))} events):**\n"
+                for t in inc.get("timeline", [])[:10]:
+                    response += f"- [{t.get('severity', '')}] {t.get('timestamp', '')[:19]} — {t.get('title', '')}\n"
+                
+                if related:
+                    response += f"\n**Related Alerts ({len(related)}):**\n"
+                    for a in related[:5]:
+                        response += f"- [{a.get('severity')}] {a.get('alert_type', '')}: {a.get('title', '')[:80]}\n"
+                
+                if inc.get('recommendations'):
+                    response += f"\n**Recommendations:**\n"
+                    for r in inc.get('recommendations', [])[:5]:
+                        response += f"- {r}\n"
+                
+                return {"response": response, "source": "local", "timestamp": datetime.now(timezone.utc).isoformat()}
+            
+            elif any(w in q for w in ['recommend', 'action', 'respond', 'do']):
+                response = f"**Response Actions for Incident {inc.get('id', '')[:8]}**\n\n"
+                if inc.get('recommendations'):
+                    for r in inc.get('recommendations'):
+                        response += f"- {r}\n"
+                else:
+                    response += "- Escalate to senior analyst\n- Preserve forensic evidence\n- Document findings\n"
+                return {"response": response, "source": "local", "timestamp": datetime.now(timezone.utc).isoformat()}
         
         # Analyze detections for context
         critical = [d for d in detections if d.get('severity') == 'CRITICAL']

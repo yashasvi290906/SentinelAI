@@ -1616,29 +1616,83 @@ async def investigate_ip(ip: str):
 @app.post("/api/reports/generate")
 async def generate_report(data: ReportRequest):
     try:
+        # Pull all real data from database
         detections = db.get_threat_detections(limit=1000)
+        alerts = db.get_alerts(limit=500)
+        incidents = db.get_incidents(limit=200)
+
         all_events = []
         uploaded = db.get_uploaded_logs(limit=100)
         for log in uploaded:
             evts = db.get_log_events(log["id"], limit=5000)
             all_events.extend(evts)
 
+        # Build device list
+        device_logs = [l for l in uploaded if l.get("source_type", "").startswith("device_")]
+        devices = []
+        seen = set()
+        for log in device_logs:
+            hostname = log.get("filename", "").replace("device_", "")
+            if hostname and hostname not in seen:
+                seen.add(hostname)
+                devices.append({
+                    "hostname": hostname,
+                    "os_type": log.get("source_type", "").replace("device_", ""),
+                    "last_seen": log.get("created_at", ""),
+                })
+
         if data.report_type == "incident" and data.detection_id:
+            # Find the specific incident or detection
+            incident = next((i for i in incidents if i.get("id", "").startswith(data.detection_id)), None)
             detection = next((d for d in detections if d.get("id") == data.detection_id), None)
-            if not detection:
-                return JSONResponse(status_code=404, content={"error": "Detection not found"})
-            related = [e for e in all_events if e.get("source_ip") == detection.get("source_ip")]
-            report = report_generator.generate_incident_report(detection, related)
+
+            if incident:
+                # Build incident report from real incident data
+                related = [e for e in all_events if any(
+                    ip in e.get("source_ip", "") or ip in e.get("dest_ip", "")
+                    for ip in incident.get("affected_ips", [])
+                )]
+                report = report_generator.generate_incident_report(
+                    {**incident, "threat_type": incident.get("title", "Unknown"),
+                     "confidence": incident.get("confidence", 0),
+                     "first_seen": incident.get("created_at", ""),
+                     "last_seen": incident.get("updated_at", ""),
+                     "event_count": len(incident.get("alert_ids", [])),
+                     "source_ip": incident.get("affected_ips", ["N/A"])[0] if incident.get("affected_ips") else "N/A",
+                     "description": incident.get("description", ""),
+                     "mitre_technique": ", ".join(incident.get("mitre_techniques", [])),
+                     "mitre_tactic": ", ".join(incident.get("mitre_tactics", [])),
+                     "evidence": [t.get("title", "") for t in incident.get("timeline", [])],
+                     "recommendations": incident.get("recommendations", []),
+                     },
+                    related
+                )
+            elif detection:
+                related = [e for e in all_events if e.get("source_ip") == detection.get("source_ip")]
+                report = report_generator.generate_incident_report(detection, related)
+            else:
+                return JSONResponse(status_code=404, content={"error": "Incident/Detection not found"})
+
         elif data.report_type == "executive":
             stats = {
                 "total_threats": len(detections),
                 "critical_threats": sum(1 for d in detections if d.get("severity") == "CRITICAL"),
+                "total_alerts": len(alerts),
+                "open_alerts": sum(1 for a in alerts if a.get("status") == "open"),
+                "total_incidents": len(incidents),
             }
             anomaly = db.get_latest_anomaly_score()
-            report = report_generator.generate_executive_report(stats, detections, anomaly or {})
+            report = report_generator.generate_executive_report(
+                stats, detections, anomaly or {},
+                incidents=incidents, alerts=alerts, events=all_events, devices=devices,
+            )
+
         else:
             anomaly = db.get_latest_anomaly_score()
-            report = report_generator.generate_technical_report(all_events, detections, anomaly or {})
+            report = report_generator.generate_technical_report(
+                all_events, detections, anomaly or {},
+                incidents=incidents, alerts=alerts,
+            )
 
         report_id = str(uuid.uuid4())
         report["id"] = report_id
@@ -1785,12 +1839,41 @@ async def get_dashboard_stats():
 async def enhanced_copilot(data: CopilotRequest):
     try:
         question = data.question or f"Analyze {data.prediction} prediction"
-        detections = db.get_threat_detections(limit=1000)
 
+        # ── RAG Context: Pull real data from all tables ──
+
+        # 1. Recent detections
+        detections = db.get_threat_detections(limit=100)
+
+        # 2. Recent alerts (last 50)
+        alerts = db.get_alerts(limit=50)
+
+        # 3. Recent incidents (last 20)
+        incidents = db.get_incidents(limit=20)
+
+        # 4. Devices
+        try:
+            logs = db.get_uploaded_logs(limit=500)
+            device_logs = [l for l in logs if l.get("source_type", "").startswith("device_")]
+            devices = []
+            seen = set()
+            for log in device_logs:
+                hostname = log.get("filename", "").replace("device_", "")
+                if hostname and hostname not in seen:
+                    seen.add(hostname)
+                    devices.append({
+                        "hostname": hostname,
+                        "os_type": log.get("source_type", "").replace("device_", ""),
+                        "last_seen": log.get("created_at", ""),
+                    })
+        except Exception:
+            devices = []
+
+        # 5. Events summary
         all_ev = []
-        uploaded = db.get_uploaded_logs(limit=100)
+        uploaded = db.get_uploaded_logs(limit=50)
         for log in uploaded:
-            evts = db.get_log_events(log["id"], limit=5000)
+            evts = db.get_log_events(log["id"], limit=200)
             all_ev.extend(evts)
 
         events_summary = None
@@ -1809,7 +1892,10 @@ async def enhanced_copilot(data: CopilotRequest):
                 "top_ips": sorted([{"ip": k, "count": v} for k, v in ip_counts.items()], key=lambda x: -x["count"])[:10],
             }
 
+        # 6. Dashboard stats
         db_stats = db.get_dashboard_stats()
+        alert_stats = db.get_alert_stats()
+        incident_stats = db.get_incident_stats()
         dashboard_stats = {
             "total_logs": db_stats.get('total_logs', 0),
             "total_events": db_stats.get('total_events', 0),
@@ -1817,16 +1903,50 @@ async def enhanced_copilot(data: CopilotRequest):
             "critical_threats": db_stats.get('critical_threats', 0),
             "unique_source_ips": db_stats.get('unique_source_ips', 0),
             "avg_anomaly_score": db_stats.get('avg_anomaly_score', 0),
+            "total_alerts": alert_stats.get('total', 0),
+            "open_alerts": alert_stats.get('open', 0),
+            "critical_alerts": alert_stats.get('critical', 0),
+            "total_incidents": incident_stats.get('total', 0),
+            "open_incidents": incident_stats.get('open', 0),
         }
 
+        # 7. Anomaly score
         anomaly_result = db.get_latest_anomaly_score()
 
+        # 8. If question references a specific incident, load its full context
+        incident_context = None
+        if "INC-" in question.upper() or "incident" in question.lower():
+            for inc in incidents:
+                inc_id = inc.get("id", "")
+                if inc_id and inc_id.upper() in question.upper():
+                    # Load related alerts
+                    related_alerts = []
+                    for aid in inc.get("alert_ids", []):
+                        alert = db.get_alert(aid)
+                        if alert:
+                            related_alerts.append(alert)
+
+                    # Load investigation notes
+                    notes = db.get_investigation_notes(inc_id)
+
+                    incident_context = {
+                        "incident": inc,
+                        "related_alerts": related_alerts,
+                        "notes": notes,
+                    }
+                    break
+
+        # Send full RAG context to Gemini
         result = await gemini_copilot.chat(
             question=question,
             detections=detections,
             anomaly_result=anomaly_result,
             events_summary=events_summary,
             dashboard_stats=dashboard_stats,
+            alerts=alerts,
+            incidents=incidents,
+            devices=devices,
+            incident_context=incident_context,
         )
 
         prediction = data.prediction
@@ -1845,6 +1965,9 @@ async def enhanced_copilot(data: CopilotRequest):
                 "total": len(detections),
                 "by_type": {d: sum(1 for t in detections if t.get("threat_type") == d) for d in set(t.get("threat_type", "") for t in detections)},
             },
+            "alerts_count": len(alerts),
+            "incidents_count": len(incidents),
+            "devices_count": len(devices),
         }
     except Exception as e:
         logger.error(f"Enhanced copilot error: {e}", extra={"module": "api", "action": "error"})

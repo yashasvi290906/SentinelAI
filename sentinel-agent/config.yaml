@@ -1,44 +1,53 @@
 # SentinelAI Agent Configuration
-server:
-  url: "http://localhost:8000"
-  api_key: ""              # Optional API key for auth
-  timeout: 30
-  retry_count: 3
-  retry_delay: 5
+# ================================
 
-agent:
-  hostname: ""             # Auto-detected if empty
-  device_id: ""            # Auto-generated on first run
-  organization_id: ""      # Set for multi-tenant
-  batch_size: 50
-  flush_interval: 10       # seconds
+# Backend server URL
+server_url: "http://127.0.0.1:8000"
 
-collection:
+# Authentication token (leave empty if backend has auth disabled)
+agent_token: ""
+
+# How many events to batch before shipping to backend
+batch_size: 20
+
+# How often to flush buffered events to backend (seconds)
+flush_interval_seconds: 15
+
+# Collector configuration
+collectors:
+  # Windows Event Log collector
   windows:
     enabled: true
+    # Event channels to monitor
     channels:
       - Security
       - System
       - Application
-    event_ids:             # Windows Event IDs to collect
-      - 4625              # Failed login
-      - 4624              # Successful login
-      - 4648              # Explicit credentials
-      - 4720              # User account created
-      - 4726              # User account deleted
-      - 4732              # Member added to local group
-      - 7045              # Service installed
-      - 4688              # Process creation
-      - 4104              # PowerShell script block
-      - 4103              # PowerShell module logging
-      - 5140              # Network share accessed
-      - 5156              # Windows Filtering Platform
+    # Event IDs to collect (Security channel)
+    event_ids:
+      - 4625    # Failed logon
+      - 4624    # Successful logon
+      - 4648    # Logon with explicit credentials (runas)
+      - 4720    # User account created
+      - 4726    # User account deleted
+      - 4728    # Member added to security-enabled global group
+      - 4732    # Member added to security-enabled local group
+      - 7045    # Service installed
+      - 4688    # New process created
+      - 4104    # PowerShell script block logging
+      - 4697    # Service installed
+      - 1102    # Audit log cleared
+    # How often to poll for new events (seconds)
+    poll_interval_seconds: 30
 
+  # Linux log collector
   linux:
     enabled: true
-    log_files:
+    # Log files to monitor
+    files:
       - /var/log/auth.log
       - /var/log/syslog
-      - /var/log/secure
       - /var/log/kern.log
-    poll_interval: 5       # seconds
+      - /var/log/secure
+    # How often to poll for new entries (seconds)
+    poll_interval_seconds: 30

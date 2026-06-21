@@ -24,8 +24,19 @@ class ReportSection:
 class ReportGenerator:
     """Generate real reports from threat detection and log analysis data."""
     
-    def generate_executive_report(self, stats: Dict, detections: List[Dict], anomalies: Dict) -> Dict[str, Any]:
-        """High-level report for management."""
+    def generate_executive_report(self, stats: Dict, detections: List[Dict], anomalies: Dict,
+                                   incidents: List[Dict] = None, alerts: List[Dict] = None,
+                                   events: List[Dict] = None, devices: List[Dict] = None) -> Dict[str, Any]:
+        """High-level report for management — built from real data."""
+        incidents = incidents or []
+        alerts = alerts or []
+        events = events or []
+        devices = devices or []
+
+        open_incidents = [i for i in incidents if i.get('status') == 'open']
+        critical_incidents = [i for i in incidents if i.get('severity') == 'CRITICAL']
+        open_alerts = [a for a in alerts if a.get('status') == 'open']
+
         return {
             'type': 'executive',
             'title': 'Security Posture Executive Report',
@@ -36,6 +47,13 @@ class ReportGenerator:
                     content={
                         'total_threats': stats.get('total_threats', 0),
                         'critical_threats': stats.get('critical_threats', 0),
+                        'total_alerts': len(alerts),
+                        'open_alerts': len(open_alerts),
+                        'total_incidents': len(incidents),
+                        'open_incidents': len(open_incidents),
+                        'critical_incidents': len(critical_incidents),
+                        'total_events': len(events),
+                        'total_devices': len(devices),
                         'risk_score': self._calculate_risk_score(detections, anomalies),
                         'status': self._get_risk_status(detections),
                         'key_findings': self._extract_key_findings(detections),
@@ -50,6 +68,32 @@ class ReportGenerator:
                         'top_source_ips': self._top_ips(detections, 10),
                     },
                     section_type='chart'
+                ).to_dict(),
+                ReportSection(
+                    title='Incident Summary',
+                    content=[{
+                        'id': i.get('id', '')[:8],
+                        'title': i.get('title', ''),
+                        'severity': i.get('severity', ''),
+                        'status': i.get('status', ''),
+                        'affected_ips': i.get('affected_ips', []),
+                        'matched_chain': i.get('matched_chain', ''),
+                        'created_at': i.get('created_at', '')[:19],
+                    } for i in incidents[:20]],
+                    section_type='table'
+                ).to_dict(),
+                ReportSection(
+                    title='Alert Summary',
+                    content=[{
+                        'id': a.get('id', '')[:8],
+                        'type': a.get('alert_type', ''),
+                        'severity': a.get('severity', ''),
+                        'title': a.get('title', ''),
+                        'source_ip': a.get('source_ip', ''),
+                        'status': a.get('status', ''),
+                        'created_at': a.get('created_at', '')[:19],
+                    } for a in alerts[:30]],
+                    section_type='table'
                 ).to_dict(),
                 ReportSection(
                     title='Anomaly Assessment',
@@ -67,14 +111,19 @@ class ReportGenerator:
                 ).to_dict(),
             ],
             'metadata': {
-                'report_version': '1.0',
+                'report_version': '2.0',
                 'generated_by': 'SentinelAI SOC Copilot',
                 'classification': 'CONFIDENTIAL',
+                'data_source': 'Real-time event pipeline',
             }
         }
     
-    def generate_technical_report(self, events: List[Dict], detections: List[Dict], anomalies: Dict) -> Dict[str, Any]:
-        """Detailed technical report for analysts."""
+    def generate_technical_report(self, events: List[Dict], detections: List[Dict], anomalies: Dict,
+                                   incidents: List[Dict] = None, alerts: List[Dict] = None) -> Dict[str, Any]:
+        """Detailed technical report for analysts — built from real data."""
+        incidents = incidents or []
+        alerts = alerts or []
+
         return {
             'type': 'technical',
             'title': 'Technical Threat Analysis Report',
@@ -99,11 +148,42 @@ class ReportGenerator:
                         'severity': d.get('severity'),
                         'confidence': d.get('confidence'),
                         'source_ip': d.get('source_ip'),
+                        'dest_ip': d.get('dest_ip', ''),
                         'description': d.get('description'),
                         'mitre': f"{d.get('mitre_technique', 'N/A')} - {d.get('mitre_tactic', 'N/A')}",
                         'evidence': d.get('evidence', []),
                         'recommendations': d.get('recommendations', []),
                     } for d in detections],
+                    section_type='table'
+                ).to_dict(),
+                ReportSection(
+                    title='Incidents',
+                    content=[{
+                        'id': i.get('id', '')[:8],
+                        'title': i.get('title', ''),
+                        'severity': i.get('severity', ''),
+                        'status': i.get('status', ''),
+                        'matched_chain': i.get('matched_chain', ''),
+                        'kill_chain_stages': i.get('kill_chain_stages', []),
+                        'affected_ips': i.get('affected_ips', []),
+                        'confidence': i.get('confidence', 0),
+                        'created_at': i.get('created_at', '')[:19],
+                    } for i in incidents],
+                    section_type='table'
+                ).to_dict(),
+                ReportSection(
+                    title='Alerts',
+                    content=[{
+                        'id': a.get('id', '')[:8],
+                        'type': a.get('alert_type', ''),
+                        'severity': a.get('severity', ''),
+                        'title': a.get('title', ''),
+                        'source_ip': a.get('source_ip', ''),
+                        'dest_ip': a.get('dest_ip', ''),
+                        'mitre': f"{a.get('mitre_technique', 'N/A')} ({a.get('mitre_tactic', 'N/A')})",
+                        'status': a.get('status', ''),
+                        'created_at': a.get('created_at', '')[:19],
+                    } for a in alerts],
                     section_type='table'
                 ).to_dict(),
                 ReportSection(
@@ -123,9 +203,10 @@ class ReportGenerator:
                 ).to_dict(),
             ],
             'metadata': {
-                'report_version': '1.0',
+                'report_version': '2.0',
                 'generated_by': 'SentinelAI SOC Copilot',
                 'classification': 'CONFIDENTIAL',
+                'data_source': 'Real-time event pipeline',
             }
         }
     
