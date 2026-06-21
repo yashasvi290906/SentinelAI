@@ -89,6 +89,12 @@ def check_rate_limit(key: str, max_requests: int = 60, window_seconds: int = 60)
     return True
 
 def log_audit(user: str, action: str, details: str = ""):
+    # Persist to database
+    try:
+        db.log_audit(user_id=user, action=action, details=details)
+    except Exception:
+        pass
+    # Also keep in memory for quick access (capped)
     audit_log.append({
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "user": user,

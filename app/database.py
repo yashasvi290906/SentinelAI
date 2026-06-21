@@ -297,6 +297,80 @@ class DatabaseManager:
                     FOREIGN KEY (incident_id) REFERENCES incidents(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS assets (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT,
+                    hostname TEXT NOT NULL,
+                    ip_address TEXT NOT NULL,
+                    os_type TEXT DEFAULT 'unknown',
+                    os_version TEXT DEFAULT '',
+                    asset_type TEXT DEFAULT 'endpoint',
+                    criticality TEXT DEFAULT 'medium',
+                    risk_score REAL DEFAULT 0.0,
+                    owner TEXT DEFAULT '',
+                    department TEXT DEFAULT '',
+                    location TEXT DEFAULT '',
+                    last_seen TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT,
+                    metadata TEXT DEFAULT '{}',
+                    FOREIGN KEY (organization_id) REFERENCES organizations(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS ioc (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT,
+                    indicator_type TEXT NOT NULL,
+                    indicator_value TEXT NOT NULL,
+                    threat_type TEXT DEFAULT '',
+                    severity TEXT DEFAULT 'MEDIUM',
+                    confidence REAL DEFAULT 0.5,
+                    source TEXT DEFAULT 'manual',
+                    description TEXT DEFAULT '',
+                    first_seen TEXT,
+                    last_seen TEXT,
+                    tags TEXT DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT,
+                    FOREIGN KEY (organization_id) REFERENCES organizations(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS detection_rules (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT,
+                    title TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    condition TEXT NOT NULL,
+                    window_seconds INTEGER DEFAULT 300,
+                    threshold REAL DEFAULT 1.0,
+                    severity TEXT DEFAULT 'MEDIUM',
+                    mitre_technique TEXT DEFAULT '',
+                    mitre_tactic TEXT DEFAULT '',
+                    enabled INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT,
+                    FOREIGN KEY (organization_id) REFERENCES organizations(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_status (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT,
+                    hostname TEXT NOT NULL,
+                    ip_address TEXT DEFAULT '',
+                    os_type TEXT DEFAULT 'unknown',
+                    agent_version TEXT DEFAULT '1.0.0',
+                    status TEXT DEFAULT 'online',
+                    last_seen TEXT,
+                    logs_collected INTEGER DEFAULT 0,
+                    events_processed INTEGER DEFAULT 0,
+                    alerts_generated INTEGER DEFAULT 0,
+                    uptime_seconds INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT,
+                    metadata TEXT DEFAULT '{}',
+                    FOREIGN KEY (organization_id) REFERENCES organizations(id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_log_events_log_id ON log_events(log_id);
                 CREATE INDEX IF NOT EXISTS idx_log_events_timestamp ON log_events(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_log_events_source_ip ON log_events(source_ip);
@@ -525,6 +599,76 @@ class DatabaseManager:
                     user_id UUID REFERENCES users(id),
                     note TEXT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS assets (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    organization_id UUID REFERENCES organizations(id),
+                    hostname VARCHAR(255) NOT NULL,
+                    ip_address INET NOT NULL,
+                    os_type VARCHAR(50) DEFAULT 'unknown',
+                    os_version VARCHAR(100) DEFAULT '',
+                    asset_type VARCHAR(50) DEFAULT 'endpoint',
+                    criticality VARCHAR(20) DEFAULT 'medium',
+                    risk_score REAL DEFAULT 0.0,
+                    owner VARCHAR(255) DEFAULT '',
+                    department VARCHAR(100) DEFAULT '',
+                    location VARCHAR(255) DEFAULT '',
+                    last_seen TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ,
+                    metadata JSONB DEFAULT '{}'
+                );
+
+                CREATE TABLE IF NOT EXISTS ioc (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    organization_id UUID REFERENCES organizations(id),
+                    indicator_type VARCHAR(50) NOT NULL,
+                    indicator_value VARCHAR(500) NOT NULL,
+                    threat_type VARCHAR(100) DEFAULT '',
+                    severity VARCHAR(20) DEFAULT 'MEDIUM',
+                    confidence REAL DEFAULT 0.5,
+                    source VARCHAR(100) DEFAULT 'manual',
+                    description TEXT DEFAULT '',
+                    first_seen TIMESTAMPTZ,
+                    last_seen TIMESTAMPTZ,
+                    tags JSONB DEFAULT '[]',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ
+                );
+
+                CREATE TABLE IF NOT EXISTS detection_rules (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    organization_id UUID REFERENCES organizations(id),
+                    title VARCHAR(255) NOT NULL,
+                    description TEXT DEFAULT '',
+                    condition TEXT NOT NULL,
+                    window_seconds INTEGER DEFAULT 300,
+                    threshold REAL DEFAULT 1.0,
+                    severity VARCHAR(20) DEFAULT 'MEDIUM',
+                    mitre_technique VARCHAR(20) DEFAULT '',
+                    mitre_tactic VARCHAR(100) DEFAULT '',
+                    enabled BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_status (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    organization_id UUID REFERENCES organizations(id),
+                    hostname VARCHAR(255) NOT NULL,
+                    ip_address INET DEFAULT '',
+                    os_type VARCHAR(50) DEFAULT 'unknown',
+                    agent_version VARCHAR(50) DEFAULT '1.0.0',
+                    status VARCHAR(20) DEFAULT 'online',
+                    last_seen TIMESTAMPTZ,
+                    logs_collected INTEGER DEFAULT 0,
+                    events_processed INTEGER DEFAULT 0,
+                    alerts_generated INTEGER DEFAULT 0,
+                    uptime_seconds INTEGER DEFAULT 0,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ,
+                    metadata JSONB DEFAULT '{}'
                 );
             """)
 
@@ -1509,6 +1653,221 @@ class DatabaseManager:
             cur.execute("SELECT COUNT(*) as cnt FROM reports")
             row = cur.fetchone()
             return row['cnt'] if USE_POSTGRESQL else row[0]
+
+    # ── Asset Inventory ──
+
+    def create_asset(self, hostname: str, ip_address: str, os_type: str = "unknown",
+                     os_version: str = "", asset_type: str = "endpoint", criticality: str = "medium",
+                     owner: str = "", department: str = "", location: str = "", organization_id: str = None) -> str:
+        asset_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""INSERT INTO assets (id, organization_id, hostname, ip_address, os_type, os_version,
+                    asset_type, criticality, owner, department, location, last_seen, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (asset_id, organization_id, hostname, ip_address, os_type, os_version,
+                     asset_type, criticality, owner, department, location, now, now))
+            else:
+                cur.execute("""INSERT INTO assets (id, organization_id, hostname, ip_address, os_type, os_version,
+                    asset_type, criticality, owner, department, location, last_seen, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (asset_id, organization_id, hostname, ip_address, os_type, os_version,
+                     asset_type, criticality, owner, department, location, now, now))
+        return asset_id
+
+    def get_assets(self, org_id: str = None, limit: int = 200) -> List[Dict]:
+        with self._cursor() as cur:
+            if org_id:
+                if USE_POSTGRESQL:
+                    cur.execute("SELECT * FROM assets WHERE organization_id = %s ORDER BY last_seen DESC LIMIT %s", (org_id, limit))
+                else:
+                    cur.execute("SELECT * FROM assets WHERE organization_id = ? ORDER BY last_seen DESC LIMIT ?", (org_id, limit))
+            else:
+                cur.execute(f"SELECT * FROM assets ORDER BY last_seen DESC LIMIT {'%s' if USE_POSTGRESQL else '?'}", (limit,))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_asset(self, asset_id: str) -> Optional[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM assets WHERE id = %s", (asset_id,))
+            else:
+                cur.execute("SELECT * FROM assets WHERE id = ?", (asset_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def update_asset(self, asset_id: str, **kwargs):
+        now = datetime.now(timezone.utc).isoformat()
+        kwargs["updated_at"] = now
+        set_clause = ", ".join(f"{k} = {'%s' if USE_POSTGRESQL else '?'}" for k in kwargs)
+        values = list(kwargs.values()) + [asset_id]
+        with self._cursor() as cur:
+            cur.execute(f"UPDATE assets SET {set_clause} WHERE id = {'%s' if USE_POSTGRESQL else '?'}", tuple(values))
+
+    def delete_asset(self, asset_id: str):
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("DELETE FROM assets WHERE id = %s", (asset_id,))
+            else:
+                cur.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
+
+    # ── IOC (Indicators of Compromise) ──
+
+    def create_ioc(self, indicator_type: str, indicator_value: str, threat_type: str = "",
+                   severity: str = "MEDIUM", confidence: float = 0.5, source: str = "manual",
+                   description: str = "", tags: List[str] = None, organization_id: str = None) -> str:
+        ioc_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        tags_json = _json.dumps(tags or [])
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""INSERT INTO ioc (id, organization_id, indicator_type, indicator_value, threat_type,
+                    severity, confidence, source, description, first_seen, last_seen, tags, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (ioc_id, organization_id, indicator_type, indicator_value, threat_type,
+                     severity, confidence, source, description, now, now, tags_json, now))
+            else:
+                cur.execute("""INSERT INTO ioc (id, organization_id, indicator_type, indicator_value, threat_type,
+                    severity, confidence, source, description, first_seen, last_seen, tags, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (ioc_id, organization_id, indicator_type, indicator_value, threat_type,
+                     severity, confidence, source, description, now, now, tags_json, now))
+        return ioc_id
+
+    def get_iocs(self, org_id: str = None, indicator_type: str = None, limit: int = 200) -> List[Dict]:
+        with self._cursor() as cur:
+            conditions = []
+            params = []
+            if org_id:
+                conditions.append(f"organization_id = {'%s' if USE_POSTGRESQL else '?'}")
+                params.append(org_id)
+            if indicator_type:
+                conditions.append(f"indicator_type = {'%s' if USE_POSTGRESQL else '?'}")
+                params.append(indicator_type)
+            where = " WHERE " + " AND ".join(conditions) if conditions else ""
+            cur.execute(f"SELECT * FROM ioc{where} ORDER BY created_at DESC LIMIT {'%s' if USE_POSTGRESQL else '?'}", tuple(params + [limit]))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_ioc(self, ioc_id: str) -> Optional[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM ioc WHERE id = %s", (ioc_id,))
+            else:
+                cur.execute("SELECT * FROM ioc WHERE id = ?", (ioc_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def check_ioc_match(self, indicator_value: str) -> Optional[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM ioc WHERE indicator_value = %s", (indicator_value,))
+            else:
+                cur.execute("SELECT * FROM ioc WHERE indicator_value = ?", (indicator_value,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def delete_ioc(self, ioc_id: str):
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("DELETE FROM ioc WHERE id = %s", (ioc_id,))
+            else:
+                cur.execute("DELETE FROM ioc WHERE id = ?", (ioc_id,))
+
+    # ── Detection Rules ──
+
+    def create_detection_rule(self, title: str, condition: str, description: str = "",
+                              window_seconds: int = 300, threshold: float = 1.0, severity: str = "MEDIUM",
+                              mitre_technique: str = "", mitre_tactic: str = "", organization_id: str = None) -> str:
+        rule_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""INSERT INTO detection_rules (id, organization_id, title, description, condition,
+                    window_seconds, threshold, severity, mitre_technique, mitre_tactic, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (rule_id, organization_id, title, description, condition,
+                     window_seconds, threshold, severity, mitre_technique, mitre_tactic, now))
+            else:
+                cur.execute("""INSERT INTO detection_rules (id, organization_id, title, description, condition,
+                    window_seconds, threshold, severity, mitre_technique, mitre_tactic, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    (rule_id, organization_id, title, description, condition,
+                     window_seconds, threshold, severity, mitre_technique, mitre_tactic, now))
+        return rule_id
+
+    def get_detection_rules(self, org_id: str = None, enabled_only: bool = True, limit: int = 200) -> List[Dict]:
+        with self._cursor() as cur:
+            conditions = []
+            params = []
+            if org_id:
+                conditions.append(f"organization_id = {'%s' if USE_POSTGRESQL else '?'}")
+                params.append(org_id)
+            if enabled_only:
+                conditions.append(f"enabled = {'%s' if USE_POSTGRESQL else '?'}")
+                params.append(1 if not USE_POSTGRESQL else True)
+            where = " WHERE " + " AND ".join(conditions) if conditions else ""
+            cur.execute(f"SELECT * FROM detection_rules{where} ORDER BY created_at DESC LIMIT {'%s' if USE_POSTGRESQL else '?'}", tuple(params + [limit]))
+            return [dict(row) for row in cur.fetchall()]
+
+    def update_detection_rule(self, rule_id: str, **kwargs):
+        now = datetime.now(timezone.utc).isoformat()
+        kwargs["updated_at"] = now
+        set_clause = ", ".join(f"{k} = {'%s' if USE_POSTGRESQL else '?'}" for k in kwargs)
+        values = list(kwargs.values()) + [rule_id]
+        with self._cursor() as cur:
+            cur.execute(f"UPDATE detection_rules SET {set_clause} WHERE id = {'%s' if USE_POSTGRESQL else '?'}", tuple(values))
+
+    def delete_detection_rule(self, rule_id: str):
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("DELETE FROM detection_rules WHERE id = %s", (rule_id,))
+            else:
+                cur.execute("DELETE FROM detection_rules WHERE id = ?", (rule_id,))
+
+    # ── Agent Status ──
+
+    def register_agent(self, hostname: str, ip_address: str, os_type: str = "unknown",
+                       agent_version: str = "1.0.0", organization_id: str = None) -> str:
+        agent_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""INSERT INTO agent_status (id, organization_id, hostname, ip_address, os_type,
+                    agent_version, status, last_seen, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (agent_id, organization_id, hostname, ip_address, os_type,
+                     agent_version, "online", now, now))
+            else:
+                cur.execute("""INSERT INTO agent_status (id, organization_id, hostname, ip_address, os_type,
+                    agent_version, status, last_seen, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (agent_id, organization_id, hostname, ip_address, os_type,
+                     agent_version, "online", now, now))
+        return agent_id
+
+    def get_agents(self, org_id: str = None, limit: int = 100) -> List[Dict]:
+        with self._cursor() as cur:
+            if org_id:
+                if USE_POSTGRESQL:
+                    cur.execute("SELECT * FROM agent_status WHERE organization_id = %s ORDER BY last_seen DESC LIMIT %s", (org_id, limit))
+                else:
+                    cur.execute("SELECT * FROM agent_status WHERE organization_id = ? ORDER BY last_seen DESC LIMIT ?", (org_id, limit))
+            else:
+                cur.execute(f"SELECT * FROM agent_status ORDER BY last_seen DESC LIMIT {'%s' if USE_POSTGRESQL else '?'}", (limit,))
+            return [dict(row) for row in cur.fetchall()]
+
+    def update_agent_status(self, agent_id: str, status: str = None, logs_collected: int = None,
+                           events_processed: int = None, alerts_generated: int = None):
+        now = datetime.now(timezone.utc).isoformat()
+        updates = {"updated_at": now, "last_seen": now}
+        if status: updates["status"] = status
+        if logs_collected is not None: updates["logs_collected"] = logs_collected
+        if events_processed is not None: updates["events_processed"] = events_processed
+        if alerts_generated is not None: updates["alerts_generated"] = alerts_generated
+        set_clause = ", ".join(f"{k} = {'%s' if USE_POSTGRESQL else '?'}" for k in updates)
+        values = list(updates.values()) + [agent_id]
+        with self._cursor() as cur:
+            cur.execute(f"UPDATE agent_status SET {set_clause} WHERE id = {'%s' if USE_POSTGRESQL else '?'}", tuple(values))
 
     def close(self):
         if self.conn:

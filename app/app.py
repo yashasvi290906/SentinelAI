@@ -231,71 +231,62 @@ def cached_predict(seq_tuple):
 # =========================
 def calculate_threat_score() -> dict:
     """
-    Transparent threat score from real historical data.
-    score = 0.40 * avg_confidence + 0.25 * critical_factor + 0.20 * disagreement_factor + 0.15 * drift_factor
+    Transparent threat score from REAL database data.
+    score = 0.40 * avg_confidence + 0.25 * critical_factor + 0.20 * alert_factor + 0.15 * incident_factor
     """
-    pred_list = list(prediction_history)
-    comp_list = list(comparison_history)
-
-    if not pred_list:
+    try:
+        detections = db.get_threat_detections(limit=500)
+        alerts = db.get_alerts(status='open', limit=200)
+        incidents = db.get_incidents(status='open', limit=100)
+    except Exception:
         return {
             "score": 0,
-            "breakdown": {
-                "confidence_contribution": 0,
-                "critical_alerts": 0,
-                "model_conflict": 0,
-                "drift_impact": 0,
-            },
-            "factors": {
-                "avg_confidence": 0,
-                "critical_count": 0,
-                "disagreement_rate": 0,
-                "drift_score": 0,
-            },
+            "breakdown": {"confidence_contribution": 0, "critical_alerts": 0, "alert_factor": 0, "incident_factor": 0},
+            "factors": {"avg_confidence": 0, "critical_count": 0, "open_alerts": 0, "open_incidents": 0},
         }
 
-    # Factor 1: Average confidence (0-100)
-    confidences = [p.get("confidence", 0) for p in pred_list]
+    if not detections and not alerts:
+        return {
+            "score": 0,
+            "breakdown": {"confidence_contribution": 0, "critical_alerts": 0, "alert_factor": 0, "incident_factor": 0},
+            "factors": {"avg_confidence": 0, "critical_count": 0, "open_alerts": 0, "open_incidents": 0},
+        }
+
+    # Factor 1: Average confidence from detections (0-40)
+    confidences = [d.get("confidence", 0) for d in detections if d.get("confidence")]
     avg_confidence = sum(confidences) / len(confidences) if confidences else 0
     confidence_contribution = round(avg_confidence * 40, 1)
 
-    # Factor 2: Critical alert count (capped at 10)
-    critical_count = sum(1 for p in pred_list if p.get("severity_score", 0) >= SEVERITY_HIGH_THRESHOLD)
-    critical_factor = min(critical_count * 2.5, 25)
+    # Factor 2: Critical alerts (0-25)
+    critical_count = sum(1 for d in detections if d.get("severity") == "CRITICAL")
+    high_count = sum(1 for d in detections if d.get("severity") == "HIGH")
+    critical_factor = min((critical_count * 3 + high_count * 1.5), 25)
 
-    # Factor 3: Model disagreement rate (0-20)
-    if comp_list:
-        disagreements = sum(1 for c in comp_list if not c.get("agreement", True))
-        disagreement_rate = disagreements / len(comp_list) if comp_list else 0
-    else:
-        disagreement_rate = 0
-    disagreement_factor = round(disagreement_rate * 20, 1)
+    # Factor 3: Open alerts factor (0-20)
+    open_alerts = len(alerts)
+    critical_alerts = sum(1 for a in alerts if a.get("severity") == "CRITICAL")
+    alert_factor = min(open_alerts * 0.5 + critical_alerts * 3, 20)
 
-    # Factor 4: Drift impact (0-15)
-    drift_list = list(drift_history)
-    if drift_list:
-        recent_drift = drift_list[0].get("score", 0)
-    else:
-        recent_drift = 0
-    drift_factor = round(min(recent_drift * 15, 15), 1)
+    # Factor 4: Open incidents factor (0-15)
+    open_incidents = len(incidents)
+    critical_incidents = sum(1 for i in incidents if i.get("severity") == "CRITICAL")
+    incident_factor = min(open_incidents * 2 + critical_incidents * 5, 15)
 
-    total_score = min(100, round(
-        confidence_contribution + critical_factor + disagreement_factor + drift_factor
-    ))
+    total_score = min(100, round(confidence_contribution + critical_factor + alert_factor + incident_factor))
 
     return {
         "score": total_score,
         "breakdown": {
             "confidence_contribution": confidence_contribution,
             "critical_alerts": round(critical_factor, 1),
-            "model_conflict": round(disagreement_factor, 1),
-            "drift_impact": drift_factor,
+            "alert_factor": round(alert_factor, 1),
+            "incident_factor": round(incident_factor, 1),
         },
         "factors": {
             "avg_confidence": round(avg_confidence, 4),
             "critical_count": critical_count,
-            "disagreement_rate": round(disagreement_rate, 4),
-            "drift_score": round(recent_drift, 4),
+            "open_alerts": open_alerts,
+            "open_incidents": open_incidents,
         },
     }
 
@@ -336,40 +327,46 @@ async def get_stats():
         a = p.get("prediction", "Unknown")
         attack_dist[a] = attack_dist.get(a, 0) + 1
 
+    # Read from database for real persistent stats
+    try:
+        pred_stats = db.get_prediction_stats()
+        comp_stats = db.get_comparison_stats()
+        detections = db.get_threat_detections(limit=500)
+        alerts = db.get_alerts(limit=200)
+        incidents = db.get_incidents(limit=100)
+    except Exception:
+        pred_stats = {"total": 0, "by_attack": {}, "avg_confidence": 0}
+        comp_stats = {"total": 0, "agreement_rate": 0}
+        detections = []
+        alerts = []
+        incidents = []
+
+    attack_dist = pred_stats.get("by_attack", {})
     most_frequent = max(attack_dist, key=attack_dist.get) if attack_dist else "None"
 
-    total_conf = sum(p.get("confidence", 0) for p in pred_list)
-    avg_conf = total_conf / len(pred_list) if pred_list else 0
-
-    total_lat = sum(p.get("latency_ms", 0) for p in pred_list)
-    avg_lat = total_lat / len(pred_list) if pred_list else 0
-
-    total_sev = sum(p.get("severity_score", 0) for p in pred_list)
-    avg_sev = total_sev / len(pred_list) if pred_list else 0
-
-    agree_count = sum(1 for c in comp_list if c.get("agreement", True))
-    agree_rate = agree_count / len(comp_list) if comp_list else 0
-
-    critical_count = sum(1 for p in pred_list if p.get("severity_score", 0) >= SEVERITY_HIGH_THRESHOLD)
-    high_count = sum(1 for p in pred_list if SEVERITY_MEDIUM_THRESHOLD <= p.get("severity_score", 0) < SEVERITY_HIGH_THRESHOLD)
+    critical_count = sum(1 for d in detections if d.get("severity") == "CRITICAL")
+    high_count = sum(1 for d in detections if d.get("severity") == "HIGH")
+    open_alerts = sum(1 for a in alerts if a.get("status") == "open")
+    open_incidents = sum(1 for i in incidents if i.get("status") == "open")
 
     threat = calculate_threat_score()
 
     return {
-        "total_predictions": len(pred_list),
-        "total_comparisons": len(comp_list),
-        "total_simulations": 0,
+        "total_predictions": pred_stats.get("total", 0),
+        "total_comparisons": comp_stats.get("total", 0),
+        "total_detections": len(detections),
+        "total_alerts": len(alerts),
+        "total_incidents": len(incidents),
         "attack_distribution": attack_dist,
         "most_frequent_attack": most_frequent,
-        "average_confidence": round(avg_conf, 4),
-        "average_latency": round(avg_lat, 2),
-        "average_severity": round(avg_sev, 1),
-        "agreement_rate": round(agree_rate, 4),
+        "average_confidence": round(pred_stats.get("avg_confidence", 0), 4),
         "critical_alerts": critical_count,
         "high_alerts": high_count,
+        "open_alerts": open_alerts,
+        "open_incidents": open_incidents,
         "threat_score": threat,
-        "recent_predictions": pred_list[:10],
-        "recent_comparisons": comp_list[:10],
+        "recent_detections": detections[:10],
+        "recent_alerts": alerts[:10],
     }
 
 
@@ -2053,8 +2050,7 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
     )
     db.insert_log_events(log_id, [event_dict])
 
-    detector = ThreatDetector()
-    detections = detector.analyze_events([event_dict])
+    detections = threat_detector.analyze_events([event_dict])
     created_alerts = []
 
     if detections:
@@ -2287,3 +2283,139 @@ async def correlate_alerts():
         created.append(inc_id)
 
     return {"correlated": len(created), "incident_ids": created}
+
+
+# =========================
+# Asset Inventory
+# =========================
+class AssetCreate(BaseModel):
+    hostname: str = Field(..., min_length=1, max_length=255)
+    ip_address: str = Field(..., max_length=45)
+    os_type: str = "unknown"
+    os_version: str = ""
+    asset_type: str = "endpoint"
+    criticality: str = "medium"
+    owner: str = ""
+    department: str = ""
+    location: str = ""
+
+@app.get("/api/assets")
+async def get_assets(org_id: str = "", limit: int = 200):
+    assets = db.get_assets(org_id=org_id or None, limit=limit)
+    return {"assets": assets, "count": len(assets)}
+
+@app.post("/api/assets")
+async def create_asset(asset: AssetCreate):
+    asset_id = db.create_asset(
+        hostname=asset.hostname, ip_address=asset.ip_address,
+        os_type=asset.os_type, os_version=asset.os_version,
+        asset_type=asset.asset_type, criticality=asset.criticality,
+        owner=asset.owner, department=asset.department, location=asset.location,
+    )
+    return {"asset_id": asset_id, "hostname": asset.hostname, "status": "created"}
+
+@app.get("/api/assets/{asset_id}")
+async def get_asset(asset_id: str):
+    asset = db.get_asset(asset_id)
+    if not asset:
+        return JSONResponse(status_code=404, content={"error": "Asset not found"})
+    return asset
+
+@app.delete("/api/assets/{asset_id}")
+async def delete_asset(asset_id: str):
+    db.delete_asset(asset_id)
+    return {"deleted": True}
+
+# =========================
+# IOC Management
+# =========================
+class IOCCreate(BaseModel):
+    indicator_type: str = Field(..., pattern=r'^(ip|domain|hash|url|email)$')
+    indicator_value: str = Field(..., min_length=1, max_length=500)
+    threat_type: str = ""
+    severity: str = "MEDIUM"
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    source: str = "manual"
+    description: str = ""
+    tags: list[str] = []
+
+@app.get("/api/ioc")
+async def get_iocs(indicator_type: str = "", limit: int = 200):
+    iocs = db.get_iocs(indicator_type=indicator_type or None, limit=limit)
+    return {"iocs": iocs, "count": len(iocs)}
+
+@app.post("/api/ioc")
+async def create_ioc(ioc: IOCCreate):
+    ioc_id = db.create_ioc(
+        indicator_type=ioc.indicator_type, indicator_value=ioc.indicator_value,
+        threat_type=ioc.threat_type, severity=ioc.severity, confidence=ioc.confidence,
+        source=ioc.source, description=ioc.description, tags=ioc.tags,
+    )
+    return {"ioc_id": ioc_id, "indicator": ioc.indicator_value, "status": "created"}
+
+@app.get("/api/ioc/check/{indicator_value}")
+async def check_ioc(indicator_value: str):
+    match = db.check_ioc_match(indicator_value)
+    if match:
+        return {"matched": True, "ioc": match}
+    return {"matched": False}
+
+@app.delete("/api/ioc/{ioc_id}")
+async def delete_ioc(ioc_id: str):
+    db.delete_ioc(ioc_id)
+    return {"deleted": True}
+
+# =========================
+# Detection Rules
+# =========================
+class DetectionRuleCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    description: str = ""
+    condition: str = Field(..., min_length=1)
+    window_seconds: int = Field(default=300, ge=1)
+    threshold: float = Field(default=1.0, ge=0.0)
+    severity: str = "MEDIUM"
+    mitre_technique: str = ""
+    mitre_tactic: str = ""
+
+@app.get("/api/rules")
+async def get_detection_rules(enabled_only: bool = True):
+    rules = db.get_detection_rules(enabled_only=enabled_only)
+    return {"rules": rules, "count": len(rules)}
+
+@app.post("/api/rules")
+async def create_detection_rule(rule: DetectionRuleCreate):
+    rule_id = db.create_detection_rule(
+        title=rule.title, description=rule.description, condition=rule.condition,
+        window_seconds=rule.window_seconds, threshold=rule.threshold, severity=rule.severity,
+        mitre_technique=rule.mitre_technique, mitre_tactic=rule.mitre_tactic,
+    )
+    return {"rule_id": rule_id, "title": rule.title, "status": "created"}
+
+@app.delete("/api/rules/{rule_id}")
+async def delete_detection_rule(rule_id: str):
+    db.delete_detection_rule(rule_id)
+    return {"deleted": True}
+
+# =========================
+# Agent Management
+# =========================
+@app.get("/api/agents")
+async def get_agents(org_id: str = ""):
+    agents = db.get_agents(org_id=org_id or None)
+    return {"agents": agents, "count": len(agents)}
+
+@app.post("/api/agents/heartbeat")
+async def agent_heartbeat(request: Request):
+    data = await request.json()
+    agent_id = data.get("agent_id")
+    if not agent_id:
+        return JSONResponse(status_code=400, content={"error": "agent_id required"})
+    db.update_agent_status(
+        agent_id=agent_id,
+        status=data.get("status", "online"),
+        logs_collected=data.get("logs_collected"),
+        events_processed=data.get("events_processed"),
+        alerts_generated=data.get("alerts_generated"),
+    )
+    return {"ok": True}
