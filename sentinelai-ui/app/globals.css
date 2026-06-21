@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+/* ========================================
+   SENTINEL AI v4 — Enterprise Cyber Intelligence Platform
+   "See the next attack before it happens."
+   ======================================== */
+
+:root {
+  /* Backgrounds - Deep Navy Gradient */
+  --bg-deep: #020617;
+  --bg-secondary: #071426;
+  --bg-tertiary: #0B1F33;
+  --bg-panel: rgba(8, 20, 32, 0.7);
+  --bg-glass: rgba(8, 20, 32, 0.55);
+  --bg-elevated: rgba(12, 28, 45, 0.8);
+  --bg-surface: rgba(15, 35, 55, 0.6);
+
+  /* Accents - Enterprise Cyber Palette */
+  --accent-cyan: #00e5ff;
+  --accent-teal: #00d4aa;
+  --accent-blue: #3b82f6;
+  --accent-green: #00ff88;
+  --accent-emerald: #10b981;
+  --accent-purple: #7c4dff;
+  --accent-violet: #8b5cf6;
+  --accent-amber: #ffb020;
+  --accent-orange: #f97316;
+  --accent-red: #ff4d6d;
+  --accent-pink: #ec4899;
+  --accent-gold: #fbbf24;
+
+  /* Text */
+  --text-primary: #f0f4f8;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  /* Borders */
+  --border-subtle: rgba(0, 229, 255, 0.08);
+  --border-medium: rgba(0, 229, 255, 0.15);
+  --border-strong: rgba(0, 229, 255, 0.25);
+
+  /* Semantic */
+  --primary: #00e5ff;
+  --primary-foreground: #020617;
+  --secondary: #071426;
+  --secondary-foreground: #f0f4f8;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --accent: #00ff88;
+  --accent-foreground: #020617;
+  --destructive: #ff4d6d;
+  --destructive-foreground: #f0f4f8;
+  --ring: #00e5ff;
+  --radius: 0.75rem;
+
+  /* Tailwind HSL overrides */
+  --background: 222 47% 6%;
+  --foreground: 210 40% 96%;
+  --border: 217 33% 12%;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  height: 100%;
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  min-height: 100%;
+  background: linear-gradient(135deg, var(--bg-deep) 0%, var(--bg-secondary) 50%, var(--bg-tertiary) 100%);
+  color: var(--text-primary);
+  font-family: 'Sora', system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg-deep); }
+::-webkit-scrollbar-thumb { background: rgba(0, 229, 255, 0.2); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 229, 255, 0.35); }
+
+::selection {
+  background: rgba(0, 229, 255, 0.2);
+  color: var(--text-primary);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+}
+
+.font-display {
+  font-family: 'Sora', sans-serif;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+
+/* Keyframes — only gridScroll is used (CyberBackground inline style) */
+@keyframes gridScroll {
+  0% { transform: translate(0, 0); }
+  100% { transform: translate(48px, 48px); }
+}

@@ -1,23 +1,62 @@
-# Dataset
-data/
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
 
-# Processed files
-processed/
+# Next.js
+.next/
+out/
 
-# Python cache
-__pycache__/
-*.pyc
+# Production
+build/
+dist/
 
-# Notebook checkpoints
-.ipynb_checkpoints/
-
-# Virtual environments
-venv/
+# Environment
 .env
+app/.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
-# Browser-export junk
-*_files/
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# OS files
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Docker
+.docker/
+
+# Data & Models
+data/
+models/*.pkl
+
+# Misc
+*.tgz
+.coverage
+htmlcov/
+.pytest_cache/

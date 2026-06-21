@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: sentinelai-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./app:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - sentinelai-network
+
+  frontend:
+    build:
+      context: ./sentinelai-ui
+      dockerfile: Dockerfile
+    container_name: sentinelai-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8000
+    volumes:
+      - ./sentinelai-ui:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+    networks:
+      - sentinelai-network
+    depends_on:
+      - backend
+
+networks:
+  sentinelai-network:
+    driver: bridge
