@@ -291,12 +291,12 @@ async def health():
 
 
 @app.get("/history")
-async def get_history(payload: dict = Depends(require_auth)):
+async def get_history():
     return {"history": list(prediction_history), "count": len(prediction_history)}
 
 
 @app.get("/stats")
-async def get_stats(payload: dict = Depends(require_auth)):
+async def get_stats():
     """Real statistics from history."""
     pred_list = list(prediction_history)
     comp_list = list(comparison_history)
@@ -344,7 +344,7 @@ async def get_stats(payload: dict = Depends(require_auth)):
 
 
 @app.get("/stats/persistent")
-async def get_persistent_stats(payload: dict = Depends(require_auth)):
+async def get_persistent_stats():
     pred_stats = db.get_prediction_stats()
     comp_stats = db.get_comparison_stats()
     return {
@@ -354,7 +354,7 @@ async def get_persistent_stats(payload: dict = Depends(require_auth)):
 
 
 @app.get("/reports")
-async def get_reports(payload: dict = Depends(require_auth)):
+async def get_reports():
     reports = db.get_reports(limit=50)
     return {"reports": reports}
 
@@ -363,7 +363,7 @@ async def get_reports(payload: dict = Depends(require_auth)):
 # ML Prediction (improved response format)
 # =========================
 @app.post("/predict")
-async def predict(data: SequenceRequest, payload: dict = Depends(require_auth)):
+async def predict(data: SequenceRequest):
     try:
         start = time.perf_counter()
         seq = data.sequence
@@ -441,7 +441,7 @@ async def predict(data: SequenceRequest, payload: dict = Depends(require_auth)):
 # Compare ML vs Markov
 # =========================
 @app.post("/compare")
-async def compare(data: SequenceRequest, payload: dict = Depends(require_auth)):
+async def compare(data: SequenceRequest):
     try:
         start = time.perf_counter()
         seq = data.sequence
@@ -508,7 +508,7 @@ async def compare(data: SequenceRequest, payload: dict = Depends(require_auth)):
 # Drift Detection
 # =========================
 @app.post("/drift")
-async def drift(data: SequenceRequest, payload: dict = Depends(require_auth)):
+async def drift(data: SequenceRequest):
     try:
         pred_list = list(prediction_history)
         if len(pred_list) < 2:
@@ -983,7 +983,7 @@ async def copilot(data: CopilotRequest):
 # Explainability Engine (XAI)
 # =========================
 @app.post("/explain")
-async def explain(data: ExplainRequest, payload: dict = Depends(require_auth)):
+async def explain(data: ExplainRequest):
     seq = data.sequence
     seq_key = tuple(seq)
 
@@ -1029,7 +1029,7 @@ async def explain(data: ExplainRequest, payload: dict = Depends(require_auth)):
 # Network Graph
 # =========================
 @app.get("/graph")
-async def get_graph(payload: dict = Depends(require_auth)):
+async def get_graph():
     nodes = []
     edges = []
     node_ids = set()
@@ -1117,7 +1117,7 @@ ATTACK_KILL_CHAIN_MAP = {
 
 
 @app.get("/killchain/{prediction}")
-async def get_killchain(prediction: str, payload: dict = Depends(require_auth)):
+async def get_killchain(prediction: str):
     mapping = ATTACK_KILL_CHAIN_MAP.get(prediction, {"stage": "recon", "progress": 10})
     current_stage = mapping["stage"]
     progress = mapping["progress"]
@@ -1144,7 +1144,7 @@ async def get_killchain(prediction: str, payload: dict = Depends(require_auth)):
 # AI Recommendations Engine
 # =========================
 @app.get("/api/recommendations")
-async def get_recommendations(payload: dict = Depends(require_auth)):
+async def get_recommendations():
     pred_list = list(prediction_history)
     if not pred_list:
         return {"recommendations": []}
@@ -1183,7 +1183,7 @@ async def get_recommendations(payload: dict = Depends(require_auth)):
 # Drift Analytics
 # =========================
 @app.get("/analytics/drift")
-async def get_drift_analytics(payload: dict = Depends(require_auth)):
+async def get_drift_analytics():
     pred_list = list(prediction_history)
 
     if len(pred_list) < 2:

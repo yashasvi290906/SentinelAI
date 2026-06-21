@@ -30,8 +30,17 @@ api.interceptors.response.use(
           if (data.access_token) {
             localStorage.setItem("sentinelai_access_token", data.access_token);
             localStorage.setItem("sentinelai_refresh_token", data.refresh_token);
-            error.config.headers.Authorization = `Bearer ${data.access_token}`;
-            return api(error.config);
+            const newApi = axios.create({
+              baseURL: API_BASE_URL,
+              timeout: 10000,
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${data.access_token}`,
+              },
+            });
+            const { method, url, data: body } = error.config;
+            const retryRes = await newApi.request({ method, url, data: body });
+            return retryRes;
           }
         } catch {
           localStorage.removeItem("sentinelai_access_token");
