@@ -71,13 +71,19 @@ export default function CopilotWidget() {
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      const content = msg.includes("401")
+        ? "Authentication required. Please log in first."
+        : msg.includes("500")
+        ? "Copilot encountered an error. Please try again."
+        : "I couldn't reach the backend. Make sure the SentinelAI server is running on port 8000.";
       setMessages((prev) => [
         ...prev,
         {
           id: `error-${Date.now()}`,
           role: "assistant",
-          content: "I couldn't reach the backend. Make sure the SentinelAI server is running on port 8000.",
+          content,
           timestamp: new Date().toISOString(),
         },
       ]);

@@ -931,7 +931,7 @@ def _build_contextual_response(question: str, context: dict) -> str:
 
 
 @app.post("/copilot")
-async def copilot(data: CopilotRequest, payload: dict = Depends(require_auth)):
+async def copilot(data: CopilotRequest):
     try:
         seq = data.sequence
         prediction = data.prediction
