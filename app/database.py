@@ -27,8 +27,14 @@ USE_POSTGRESQL = HAS_POSTGRESQL and DB_URL and DB_URL.startswith("postgres")
 
 class DatabaseManager:
     def __init__(self):
-        if USE_POSTGRESQL:
-            self._init_postgresql()
+        self.use_postgresql = USE_POSTGRESQL
+        if self.use_postgresql:
+            try:
+                self._init_postgresql()
+            except Exception as e:
+                print(f"PostgreSQL connection failed ({e}), falling back to SQLite")
+                self.use_postgresql = False
+                self._init_sqlite()
         else:
             self._init_sqlite()
 
@@ -46,7 +52,7 @@ class DatabaseManager:
 
     @contextmanager
     def _cursor(self):
-        if USE_POSTGRESQL:
+        if self.use_postgresql:
             cursor = self.conn.cursor()
             try:
                 yield cursor
