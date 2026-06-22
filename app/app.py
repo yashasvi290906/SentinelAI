@@ -2497,3 +2497,691 @@ async def agent_heartbeat(request: Request):
         alerts_generated=data.get("alerts_generated"),
     )
     return {"ok": True}
+
+
+# ================================================================
+# ENTERPRISE SOC FEATURES
+# ================================================================
+
+# =========================
+# GeoIP Enrichment
+# =========================
+@app.get("/api/geoip/{ip}")
+async def geoip_lookup(ip: str):
+    """Enrich an IP with geolocation data."""
+    from services.geoip_service import geoip_service
+    result = await geoip_service.enrich(ip)
+    return result
+
+
+@app.get("/api/geoip/batch")
+async def geoip_batch(ips: str = ""):
+    """Enrich multiple IPs (comma-separated)."""
+    from services.geoip_service import geoip_service
+    ip_list = [ip.strip() for ip in ips.split(",") if ip.strip()]
+    results = await geoip_service.enrich_batch(ip_list[:50])
+    return {"results": results}
+
+
+@app.get("/api/geoip/attacks")
+async def geoip_attack_map():
+    """Get attack origins with geolocation for the world map."""
+    from services.geoip_service import geoip_service
+    import asyncio as _aio
+
+    detections = db.get_threat_detections(limit=500)
+    alerts = db.get_alerts(status='open', limit=200)
+
+    # Collect unique source IPs
+    ip_set = set()
+    ip_threats = {}
+    for det in detections:
+        sip = det.get("source_ip", "")
+        if sip and sip not in ("127.0.0.1", "localhost", ""):
+            ip_set.add(sip)
+            if sip not in ip_threats:
+                ip_threats[sip] = {"count": 0, "severity": "LOW", "types": set()}
+            ip_threats[sip]["count"] += 1
+            sev = det.get("severity", "INFO")
+            if _severity_rank(sev) > _severity_rank(ip_threats[sip]["severity"]):
+                ip_threats[sip]["severity"] = sev
+            ip_threats[sip]["types"].add(det.get("threat_type", "unknown"))
+
+    for alert in alerts:
+        sip = alert.get("source_ip", "")
+        if sip and sip not in ("127.0.0.1", "localhost", ""):
+            ip_set.add(sip)
+            if sip not in ip_threats:
+                ip_threats[sip] = {"count": 0, "severity": "LOW", "types": set()}
+            ip_threats[sip]["count"] += 1
+
+    # Enrich all IPs concurrently (max 30)
+    ip_list = list(ip_set)[:30]
+    enrichments = await _aio.gather(*[geoip_service.enrich(ip) for ip in ip_list])
+
+    # Build attack map points
+    attack_points = []
+    country_stats = {}
+    for enrich in enrichments:
+        ip = enrich.get("ip", "")
+        threat = ip_threats.get(ip, {})
+        country = enrich.get("country", "Unknown")
+        country_stats[country] = country_stats.get(country, 0) + threat.get("count", 0)
+
+        if enrich.get("latitude") and enrich.get("longitude"):
+            attack_points.append({
+                "ip": ip,
+                "country": country,
+                "country_code": enrich.get("country_code", ""),
+                "city": enrich.get("city", ""),
+                "latitude": enrich["latitude"],
+                "longitude": enrich["longitude"],
+                "isp": enrich.get("isp", "Unknown"),
+                "asn": enrich.get("asn", ""),
+                "attack_count": threat.get("count", 0),
+                "severity": threat.get("severity", "LOW"),
+                "attack_types": list(threat.get("types", set())),
+                "is_proxy": enrich.get("is_proxy", False),
+                "is_hosting": enrich.get("is_hosting", False),
+            })
+
+    return {
+        "attacks": attack_points,
+        "country_stats": dict(sorted(country_stats.items(), key=lambda x: -x[1])[:20]),
+        "total_ips": len(ip_set),
+        "total_attacks": sum(t["count"] for t in ip_threats.values()),
+    }
+
+
+def _severity_rank(sev: str) -> int:
+    return {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0}.get(sev, 0)
+
+
+# =========================
+# Attacks Per Second (APS)
+# =========================
+_aps_buffer: deque = deque(maxlen=10000)
+_aps_last_record = 0
+
+@app.get("/api/metrics/aps")
+async def get_aps():
+    """Get attacks/events per second metrics."""
+    now = time.time()
+    window_1s = [t for t in _aps_buffer if now - t <= 1.0]
+    window_5s = [t for t in _aps_buffer if now - t <= 5.0]
+    window_60s = [t for t in _aps_buffer if now - t <= 60.0]
+    window_3600s = [t for t in _aps_buffer if now - t <= 3600.0]
+
+    # Calculate trends
+    recent_10s = len([t for t in _aps_buffer if now - t <= 10.0])
+    prev_10s = len([t for t in _aps_buffer if 10.0 < now - t <= 20.0])
+    trend = 0
+    if prev_10s > 0:
+        trend = round(((recent_10s - prev_10s) / prev_10s) * 100, 1)
+
+    # Get database counts for longer windows
+    try:
+        detections = db.get_threat_detections(limit=5000)
+        alerts = db.get_alerts(limit=1000)
+        incidents = db.get_incidents(limit=500)
+    except Exception:
+        detections, alerts, incidents = [], [], []
+
+    # Compute per-type rates
+    type_counts = {}
+    for d in detections:
+        tt = d.get("threat_type", "unknown")
+        type_counts[tt] = type_counts.get(tt, 0) + 1
+
+    return {
+        "attacks_per_second": len(window_1s),
+        "events_per_second": len(window_1s),
+        "attacks_per_5s": len(window_5s),
+        "attacks_per_minute": len(window_60s),
+        "attacks_per_hour": len(window_3600s),
+        "trend_percent": trend,
+        "total_detections": len(detections),
+        "total_alerts": len(alerts),
+        "total_incidents": len(incidents),
+        "detection_rate": round(len(detections) / max(len(window_3600s) / 3600, 1), 2) if window_3600s else 0,
+        "alerts_per_minute": round(len([a for a in alerts if a.get("created_at") and now - _parse_iso(a["created_at"]) <= 60]) if alerts else 0, 1),
+        "type_distribution": dict(sorted(type_counts.items(), key=lambda x: -x[1])[:10]),
+    }
+
+
+def _parse_iso(ts: str) -> float:
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return dt.timestamp()
+    except Exception:
+        return 0
+
+
+def _record_aps_event():
+    """Record an event timestamp for APS calculation."""
+    _aps_buffer.append(time.time())
+
+
+# =========================
+# MITRE ATT&CK Matrix (Enterprise)
+# =========================
+MITRE_TACTICS = [
+    {"id": "TA0043", "name": "Reconnaissance", "description": "Gathering information to plan future operations", "color": "#FF6B6B"},
+    {"id": "TA0042", "name": "Resource Development", "description": "Establishing resources to support operations", "color": "#FF8E53"},
+    {"id": "TA0001", "name": "Initial Access", "description": "Gaining initial foothold into the network", "color": "#FFA94D"},
+    {"id": "TA0002", "name": "Execution", "description": "Running malicious code on target systems", "color": "#FFD43B"},
+    {"id": "TA0003", "name": "Persistence", "description": "Maintaining access to compromised systems", "color": "#A9E34B"},
+    {"id": "TA0004", "name": "Privilege Escalation", "description": "Gaining higher-level permissions", "color": "#69DB7C"},
+    {"id": "TA0005", "name": "Defense Evasion", "description": "Avoiding detection by security tools", "color": "#38D9A9"},
+    {"id": "TA0006", "name": "Credential Access", "description": "Stealing account credentials", "color": "#3BC9DB"},
+    {"id": "TA0007", "name": "Discovery", "description": "Mapping the internal network", "color": "#4DABF7"},
+    {"id": "TA0008", "name": "Lateral Movement", "description": "Moving through the network", "color": "#748FFC"},
+    {"id": "TA0009", "name": "Collection", "description": "Gathering target data", "color": "#9775FA"},
+    {"id": "TA0011", "name": "Command and Control", "description": "Communicating with compromised systems", "color": "#DA77F2"},
+    {"id": "TA0010", "name": "Exfiltration", "description": "Stealing data from the network", "color": "#F783AC"},
+    {"id": "TA0040", "name": "Impact", "description": "Disrupting, destroying, or manipulating systems", "color": "#E03131"},
+]
+
+MITRE_TECHNIQUES_MAP = {
+    "Reconnaissance": [
+        {"id": "T1595", "name": "Active Scanning", "description": "Scanning target infrastructure", "detection": "Network IDS, Firewall logs"},
+        {"id": "T1592", "name": "Gather Victim Host Info", "description": "Collecting information about hosts", "detection": "OSINT monitoring"},
+    ],
+    "Initial Access": [
+        {"id": "T1190", "name": "Exploit Public-Facing App", "description": "Exploiting vulnerabilities in public apps", "detection": "WAF logs, Application logs"},
+        {"id": "T1078", "name": "Valid Accounts", "description": "Using legitimate credentials", "detection": "Authentication logs, Anomaly detection"},
+        {"id": "T1566", "name": "Phishing", "description": "Spear phishing via email", "detection": "Email gateway, User reports"},
+    ],
+    "Execution": [
+        {"id": "T1059", "name": "Command and Scripting Interpreter", "description": "Executing commands via shells/interpreters", "detection": "Process monitoring, Command-line logging"},
+        {"id": "T1204", "name": "User Execution", "description": "Tricking users into running malicious code", "detection": "EDR, User behavior analytics"},
+    ],
+    "Persistence": [
+        {"id": "T1053", "name": "Scheduled Task/Job", "description": "Scheduling tasks for persistence", "detection": "Task scheduler logs, EDR"},
+        {"id": "T1543", "name": "Create or Modify System Process", "description": "Modifying system services", "detection": "Service creation events"},
+    ],
+    "Privilege Escalation": [
+        {"id": "T1068", "name": "Exploitation for Privilege Escalation", "description": "Exploiting vulnerabilities for higher privileges", "detection": "Kernel logs, EDR"},
+    ],
+    "Defense Evasion": [
+        {"id": "T1070", "name": "Indicator Removal", "description": "Clearing logs and indicators", "detection": "Log integrity monitoring"},
+        {"id": "T1027", "name": "Obfuscated Files or Information", "description": "Encoding/encrypting payloads", "detection": "Static analysis, Sandbox"},
+    ],
+    "Credential Access": [
+        {"id": "T1110", "name": "Brute Force", "description": "Guessing passwords systematically", "detection": "Authentication logs, Rate limiting"},
+        {"id": "T1003", "name": "OS Credential Dumping", "description": "Extracting credential stores", "detection": "LSASS access monitoring, EDR"},
+    ],
+    "Discovery": [
+        {"id": "T1046", "name": "Network Service Discovery", "description": "Scanning for open services", "detection": "Network flow analysis, IDS"},
+    ],
+    "Lateral Movement": [
+        {"id": "T1021", "name": "Remote Services", "description": "Moving laterally via remote access", "detection": "Network traffic analysis, Authentication logs"},
+        {"id": "T1570", "name": "Lateral Tool Transfer", "description": "Copying tools to other systems", "detection": "Network file transfer monitoring"},
+    ],
+    "Collection": [
+        {"id": "T1005", "name": "Data from Local System", "description": "Collecting data from local files", "detection": "File access monitoring, DLP"},
+        {"id": "T1039", "name": "Data from Network Shared Drive", "description": "Collecting from network shares", "detection": "Share access logs"},
+    ],
+    "Command and Control": [
+        {"id": "T1071", "name": "Application Layer Protocol", "description": "Using standard protocols for C2", "detection": "Network traffic analysis, DNS monitoring"},
+        {"id": "T1573", "name": "Encrypted Channel", "description": "Encrypting C2 communications", "detection": "TLS inspection, Beacon analysis"},
+    ],
+    "Exfiltration": [
+        {"id": "T1041", "name": "Exfiltration Over C2 Channel", "description": "Sending data over C2 connection", "detection": "Data loss prevention, Egress filtering"},
+        {"id": "T1567", "name": "Exfiltration Over Web Service", "description": "Using cloud services for exfiltration", "detection": "DLP, Cloud access monitoring"},
+    ],
+    "Impact": [
+        {"id": "T1486", "name": "Data Encrypted for Impact", "description": "Ransomware encryption", "detection": "File system monitoring, EDR"},
+        {"id": "T1489", "name": "Service Stop", "description": "Stopping critical services", "detection": "Service monitoring, Event logs"},
+    ],
+}
+
+
+@app.get("/api/mitre/matrix")
+async def get_mitre_matrix():
+    """Get MITRE ATT&CK matrix with detection data."""
+    detections = db.get_threat_detections(limit=2000)
+    alerts = db.get_alerts(limit=500)
+
+    # Count technique occurrences
+    technique_counts = {}
+    tactic_counts = {}
+
+    for det in detections:
+        tech = det.get("mitre_technique", "")
+        tactic = det.get("mitre_tactic", "")
+        if tech:
+            technique_counts[tech] = technique_counts.get(tech, 0) + 1
+        if tactic:
+            tactic_counts[tactic] = tactic_counts.get(tactic, 0) + 1
+
+    for alert in alerts:
+        tech = alert.get("mitre_technique", "")
+        tactic = alert.get("mitre_tactic", "")
+        if tech:
+            technique_counts[tech] = technique_counts.get(tech, 0) + 1
+        if tactic:
+            tactic_counts[tactic] = tactic_counts.get(tactic, 0) + 1
+
+    # Build matrix
+    matrix = []
+    total_techniques = 0
+    active_techniques = 0
+
+    for tactic in MITRE_TACTICS:
+        tactic_name = tactic["name"]
+        techniques = MITRE_TECHNIQUES_MAP.get(tactic_name, [])
+        tactic_detection = tactic_counts.get(tactic_name, 0)
+
+        tech_list = []
+        for tech in techniques:
+            total_techniques += 1
+            detection_count = technique_counts.get(tech["id"], 0)
+            is_active = detection_count > 0
+            if is_active:
+                active_techniques += 1
+
+            tech_list.append({
+                **tech,
+                "detection_count": detection_count,
+                "is_active": is_active,
+                "status": "active" if detection_count >= 5 else "observed" if detection_count > 0 else "none",
+            })
+
+        matrix.append({
+            **tactic,
+            "techniques": tech_list,
+            "detection_count": tactic_detection,
+            "active_techniques": sum(1 for t in tech_list if t["is_active"]),
+        })
+
+    return {
+        "tactics": matrix,
+        "total_techniques": total_techniques,
+        "active_techniques": active_techniques,
+        "coverage_percent": round((active_techniques / max(total_techniques, 1)) * 100, 1),
+        "total_detections": len(detections),
+        "top_techniques": sorted(
+            [{"id": k, "count": v} for k, v in technique_counts.items()],
+            key=lambda x: -x["count"]
+        )[:10],
+    }
+
+
+# =========================
+# Threat Hunting Workspace
+# =========================
+@app.get("/api/hunt/search")
+async def threat_hunt_search(
+    q: str = "",
+    severity: str = "",
+    attack_type: str = "",
+    source_ip: str = "",
+    hostname: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    limit: int = 200,
+):
+    """Search across detections, alerts, and events."""
+    results = {"detections": [], "alerts": [], "events": [], "total": 0}
+
+    # Search detections
+    detections = db.get_threat_detections_filtered(
+        severity=severity or None,
+        threat_type=attack_type or None,
+        source_ip=source_ip or None,
+        limit=limit,
+    )
+    if q:
+        q_lower = q.lower()
+        detections = [d for d in detections if any(
+            q_lower in str(d.get(k, "")).lower()
+            for k in ("threat_type", "source_ip", "dest_ip", "description", "severity", "mitre_technique")
+        )]
+    results["detections"] = detections
+
+    # Search alerts
+    alerts = db.get_alerts(severity=severity or None, limit=limit)
+    if q:
+        q_lower = q.lower()
+        alerts = [a for a in alerts if any(
+            q_lower in str(a.get(k, "")).lower()
+            for k in ("alert_type", "title", "description", "source_ip", "severity", "mitre_technique")
+        )]
+    results["alerts"] = alerts
+
+    # Search events
+    uploaded = db.get_uploaded_logs(limit=50)
+    all_events = []
+    for log in uploaded:
+        evts = db.get_log_events(log["id"], limit=500)
+        all_events.extend(evts)
+
+    if q:
+        q_lower = q.lower()
+        all_events = [e for e in all_events if any(
+            q_lower in str(e.get(k, "")).lower()
+            for k in ("event_type", "source_ip", "dest_ip", "hostname", "message", "source")
+        )]
+    if hostname:
+        all_events = [e for e in all_events if hostname.lower() in str(e.get("hostname", "")).lower()]
+
+    results["events"] = all_events[:limit]
+    results["total"] = len(results["detections"]) + len(results["alerts"]) + len(results["events"])
+
+    # Build timeline
+    timeline = []
+    for d in detections[:50]:
+        timeline.append({
+            "timestamp": d.get("timestamp", d.get("created_at", "")),
+            "type": "detection",
+            "title": d.get("threat_type", "Unknown"),
+            "severity": d.get("severity", "LOW"),
+            "source_ip": d.get("source_ip", ""),
+            "description": d.get("description", ""),
+        })
+    for a in alerts[:50]:
+        timeline.append({
+            "timestamp": a.get("created_at", ""),
+            "type": "alert",
+            "title": a.get("title", "Unknown"),
+            "severity": a.get("severity", "LOW"),
+            "source_ip": a.get("source_ip", ""),
+            "description": a.get("description", ""),
+        })
+    timeline.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+
+    results["timeline"] = timeline[:100]
+    return results
+
+
+# =========================
+# Security Metrics (KPI Dashboard)
+# =========================
+@app.get("/api/metrics/security")
+async def get_security_metrics():
+    """Get comprehensive security metrics for the KPI bar."""
+    now = time.time()
+
+    try:
+        detections = db.get_threat_detections(limit=5000)
+        alerts = db.get_alerts(limit=2000)
+        incidents = db.get_incidents(limit=500)
+        agents = db.get_agents()
+    except Exception:
+        detections, alerts, incidents, agents = [], [], [], []
+
+    # MTTD (Mean Time to Detect) — time between event and detection
+    mttd_minutes = 0
+    mttr_minutes = 0
+    detection_times = []
+    resolution_times = []
+
+    for inc in incidents:
+        created = inc.get("created_at", "")
+        updated = inc.get("updated_at", "")
+        if created and updated:
+            try:
+                ct = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                ut = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                resolution_minutes = (ut - ct).total_seconds() / 60
+                if 0 < resolution_minutes < 1440:  # within 24h
+                    resolution_times.append(resolution_minutes)
+            except Exception:
+                pass
+
+    for det in detections:
+        ts = det.get("timestamp", det.get("created_at", ""))
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                detection_times.append(dt.timestamp())
+            except Exception:
+                pass
+
+    if resolution_times:
+        mttr_minutes = round(sum(resolution_times) / len(resolution_times), 1)
+
+    # APS from buffer
+    aps = len([t for t in _aps_buffer if now - t <= 1.0])
+    eps = aps  # events per second
+
+    # Connected agents
+    online_agents = sum(1 for a in agents if a.get("status") == "online")
+
+    # Severity breakdown
+    sev_breakdown = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+    for d in detections:
+        sev = d.get("severity", "LOW")
+        if sev in sev_breakdown:
+            sev_breakdown[sev] += 1
+
+    # Attack type distribution
+    type_dist = {}
+    for d in detections:
+        tt = d.get("threat_type", "unknown")
+        type_dist[tt] = type_dist.get(tt, 0) + 1
+
+    # Alert status
+    open_alerts = sum(1 for a in alerts if a.get("status") == "open")
+    closed_alerts = sum(1 for a in alerts if a.get("status") in ("resolved", "false_positive"))
+
+    # Incident status
+    open_incidents = sum(1 for i in incidents if i.get("status") == "open")
+    closed_incidents = sum(1 for i in incidents if i.get("status") in ("resolved", "closed"))
+
+    return {
+        "aps": aps,
+        "eps": eps,
+        "trend_percent": 0,
+        "total_detections": len(detections),
+        "total_alerts": len(alerts),
+        "total_incidents": len(incidents),
+        "open_alerts": open_alerts,
+        "closed_alerts": closed_alerts,
+        "open_incidents": open_incidents,
+        "closed_incidents": closed_incidents,
+        "mttd_minutes": round(sum(detection_times) / max(len(detection_times), 1) / 60, 1) if detection_times else 0,
+        "mttr_minutes": mttr_minutes,
+        "severity_breakdown": sev_breakdown,
+        "attack_distribution": dict(sorted(type_dist.items(), key=lambda x: -x[1])[:10]),
+        "connected_agents": online_agents,
+        "total_agents": len(agents),
+        "threat_score": calculate_threat_score(),
+    }
+
+
+# =========================
+# Detection Pipeline Visualizer
+# =========================
+@app.get("/api/metrics/pipeline")
+async def get_pipeline_metrics():
+    """Get detection pipeline stage metrics."""
+    try:
+        uploaded = db.get_uploaded_logs(limit=500)
+        detections = db.get_threat_detections(limit=2000)
+        alerts = db.get_alerts(limit=1000)
+        incidents = db.get_incidents(limit=500)
+    except Exception:
+        uploaded, detections, alerts, incidents = [], [], [], []
+
+    # Compute pipeline stages
+    total_logs = len(uploaded)
+    total_events = sum(log.get("event_count", 0) for log in uploaded)
+    total_threats = len(detections)
+    total_alerts = len(alerts)
+    total_incidents = len(incidents)
+    total_reports = db.get_total_reports()
+
+    # Active rules
+    try:
+        rules = db.get_detection_rules(enabled_only=True)
+        active_rules = len(rules)
+    except Exception:
+        active_rules = 0
+
+    # ML predictions
+    pred_list = list(prediction_history)
+    total_predictions = len(pred_list)
+
+    return {
+        "stages": [
+            {"name": "Log Collection", "count": total_logs, "status": "active" if total_logs > 0 else "idle", "icon": "database"},
+            {"name": "Normalization", "count": total_events, "status": "active" if total_events > 0 else "idle", "icon": "filter"},
+            {"name": "Detection Rules", "count": total_threats, "status": "active" if total_threats > 0 else "idle", "icon": "shield", "detail": f"{active_rules} rules active"},
+            {"name": "ML Prediction", "count": total_predictions, "status": "active" if total_predictions > 0 else "idle", "icon": "brain"},
+            {"name": "Correlation", "count": total_incidents, "status": "active" if total_incidents > 0 else "idle", "icon": "link"},
+            {"name": "Alerts", "count": total_alerts, "status": "active" if total_alerts > 0 else "idle", "icon": "bell"},
+            {"name": "Incidents", "count": total_incidents, "status": "active" if total_incidents > 0 else "idle", "icon": "alert-triangle"},
+            {"name": "Reports", "count": total_reports, "status": "active" if total_reports > 0 else "idle", "icon": "file-text"},
+        ],
+        "total_logs": total_logs,
+        "total_events": total_events,
+        "total_detections": total_threats,
+        "total_alerts": total_alerts,
+        "total_incidents": total_incidents,
+        "total_reports": total_reports,
+        "active_rules": active_rules,
+    }
+
+
+# =========================
+# Attack Heatmap Data
+# =========================
+@app.get("/api/metrics/heatmap")
+async def get_attack_heatmap():
+    """Get hourly attack distribution for heatmap."""
+    try:
+        detections = db.get_threat_detections(limit=5000)
+        alerts = db.get_alerts(limit=2000)
+    except Exception:
+        detections, alerts = [], []
+
+    # Build 24h x 7d heatmap grid
+    hourly = [0] * 24
+    daily = [0] * 7
+    grid = [[0] * 24 for _ in range(7)]
+
+    for det in detections:
+        ts = det.get("timestamp", det.get("created_at", ""))
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                hour = dt.hour
+                day = dt.weekday()
+                hourly[hour] += 1
+                daily[day] += 1
+                grid[day][hour] += 1
+            except Exception:
+                pass
+
+    for alert in alerts:
+        ts = alert.get("created_at", "")
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                hour = dt.hour
+                day = dt.weekday()
+                hourly[hour] += 1
+                daily[day] += 1
+                grid[day][hour] += 1
+            except Exception:
+                pass
+
+    return {
+        "hourly": hourly,
+        "daily": daily,
+        "grid": grid,
+        "day_labels": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        "hour_labels": [f"{h:02d}" for h in range(24)],
+        "total": sum(hourly),
+    }
+
+
+# =========================
+# Risk Scoring Engine
+# =========================
+@app.get("/api/assets/{asset_id}/risk")
+async def get_asset_risk(asset_id: str):
+    """Calculate risk score for an asset."""
+    asset = db.get_asset(asset_id)
+    if not asset:
+        return JSONResponse(status_code=404, content={"error": "Asset not found"})
+
+    ip = asset.get("ip_address", "")
+    hostname = asset.get("hostname", "")
+
+    # Get threats for this asset
+    ip_threats = db.get_threats_by_ip(ip) if ip else []
+    all_detections = db.get_threat_detections(limit=5000)
+    asset_detections = [d for d in all_detections if d.get("source_ip") == ip or d.get("dest_ip") == ip]
+
+    # Get alerts
+    alerts = db.get_alerts(status='open', limit=500)
+    asset_alerts = [a for a in alerts if a.get("source_ip") == ip or a.get("dest_ip") == ip]
+
+    # Calculate risk factors
+    critical_count = sum(1 for d in asset_detections if d.get("severity") == "CRITICAL")
+    high_count = sum(1 for d in asset_detections if d.get("severity") == "HIGH")
+    open_alerts = len(asset_alerts)
+
+    # Risk score: 0-100
+    severity_score = min((critical_count * 15 + high_count * 8), 50)
+    alert_score = min(open_alerts * 5, 30)
+    criticality_bonus = {"critical": 15, "high": 10, "medium": 5, "low": 0}.get(asset.get("criticality", "medium"), 5)
+    risk_score = min(100, severity_score + alert_score + criticality_bonus)
+
+    if risk_score >= 80:
+        risk_level = "CRITICAL"
+    elif risk_score >= 60:
+        risk_level = "HIGH"
+    elif risk_score >= 40:
+        risk_level = "MEDIUM"
+    else:
+        risk_level = "LOW"
+
+    return {
+        "asset_id": asset_id,
+        "hostname": hostname,
+        "ip_address": ip,
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "factors": {
+            "critical_detections": critical_count,
+            "high_detections": high_count,
+            "open_alerts": open_alerts,
+            "criticality": asset.get("criticality", "medium"),
+            "severity_score": severity_score,
+            "alert_score": alert_score,
+        },
+        "recommendations": _get_risk_recommendations(risk_level, critical_count, open_alerts),
+    }
+
+
+def _get_risk_recommendations(level: str, critical: int, alerts: int) -> list:
+    recs = []
+    if level == "CRITICAL":
+        recs.append("Isolate this asset from the network immediately")
+        recs.append("Conduct full forensic analysis")
+        recs.append("Reset all credentials on this host")
+    if level in ("CRITICAL", "HIGH"):
+        recs.append("Enable full packet capture")
+        recs.append("Review and harden access controls")
+    if critical > 0:
+        recs.append("Investigate all critical detections")
+    if alerts > 5:
+        recs.append("Triage and resolve open alerts")
+    recs.append("Verify endpoint protection is active")
+    return recs
+
+
+# =========================
+# Global APS Event Recording
+# =========================
+@app.middleware("http")
+async def aps_middleware(request: Request, call_next):
+    """Record every API call for APS calculation."""
+    response = await call_next(request)
+    if request.url.path.startswith("/ingest") or request.url.path.startswith("/api"):
+        _record_aps_event()
+    return response

@@ -43,6 +43,9 @@ const primaryNav = [
 
 const secondaryNav = [
   { id: 'copilot', label: 'AI Copilot', icon: MessageCircle },
+  { id: 'threat-hunt', label: 'Threat Hunt', icon: Search },
+  { id: 'security-metrics', label: 'Security Metrics', icon: BarChart3 },
+  { id: 'pipeline-visualizer', label: 'Pipeline', icon: Activity },
   { id: 'explainability', label: 'Explainability', icon: ScanSearch },
   { id: 'network-graph', label: 'Network Graph', icon: Network },
   { id: 'attack-journey', label: 'Attack Journey', icon: Route },

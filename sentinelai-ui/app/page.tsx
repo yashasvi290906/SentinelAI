@@ -37,6 +37,9 @@ const ThreatDetection = dynamic(() => import("@/modules/threat-detection"), { lo
 const MitreMatrix = dynamic(() => import("@/modules/mitre-matrix"), { loading: () => <LoadingSkeleton /> });
 const Investigation = dynamic(() => import("@/modules/investigation"), { loading: () => <LoadingSkeleton /> });
 const Incidents = dynamic(() => import("@/modules/incidents"), { loading: () => <LoadingSkeleton /> });
+const ThreatHunt = dynamic(() => import("@/modules/threat-hunt"), { loading: () => <LoadingSkeleton /> });
+const SecurityMetrics = dynamic(() => import("@/modules/security-metrics"), { loading: () => <LoadingSkeleton /> });
+const PipelineVisualizer = dynamic(() => import("@/modules/pipeline-visualizer"), { loading: () => <LoadingSkeleton /> });
 
 const MODULE_MAP: Record<string, { component: React.ComponentType; label: string }> = {
   dashboard: { component: Dashboard, label: "Dashboard" },
@@ -63,6 +66,9 @@ const MODULE_MAP: Record<string, { component: React.ComponentType; label: string
   "investigation": { component: Investigation, label: "Investigation" },
   incidents: { component: Incidents, label: "Incidents" },
   devices: { component: Devices, label: "Devices" },
+  "threat-hunt": { component: ThreatHunt, label: "Threat Hunt" },
+  "security-metrics": { component: SecurityMetrics, label: "Security Metrics" },
+  "pipeline-visualizer": { component: PipelineVisualizer, label: "Pipeline" },
   about: { component: About, label: "About" },
 };
 

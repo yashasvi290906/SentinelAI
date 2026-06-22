@@ -366,3 +366,135 @@ export async function correlateAlertsAPI() {
   const res = await api.post('/api/incidents/correlate');
   return res.data;
 }
+
+// ── GeoIP ──
+export async function geoipLookupAPI(ip: string) {
+  const res = await api.get(`/api/geoip/${ip}`);
+  return res.data;
+}
+
+export async function geoipAttackMapAPI() {
+  const res = await api.get('/api/geoip/attacks');
+  return res.data;
+}
+
+// ── APS Metrics ──
+export async function getApsAPI() {
+  const res = await api.get('/api/metrics/aps');
+  return res.data;
+}
+
+// ── MITRE Matrix ──
+export async function getMitreMatrixAPI() {
+  const res = await api.get('/api/mitre/matrix');
+  return res.data;
+}
+
+// ── Threat Hunting ──
+export async function threatHuntSearchAPI(params: {
+  q?: string; severity?: string; attack_type?: string;
+  source_ip?: string; hostname?: string; date_from?: string;
+  date_to?: string; limit?: number;
+}) {
+  const queryParams = new URLSearchParams();
+  if (params.q) queryParams.set('q', params.q);
+  if (params.severity) queryParams.set('severity', params.severity);
+  if (params.attack_type) queryParams.set('attack_type', params.attack_type);
+  if (params.source_ip) queryParams.set('source_ip', params.source_ip);
+  if (params.hostname) queryParams.set('hostname', params.hostname);
+  if (params.date_from) queryParams.set('date_from', params.date_from);
+  if (params.date_to) queryParams.set('date_to', params.date_to);
+  if (params.limit) queryParams.set('limit', String(params.limit));
+  const res = await api.get(`/api/hunt/search?${queryParams.toString()}`);
+  return res.data;
+}
+
+// ── Security Metrics ──
+export async function getSecurityMetricsAPI() {
+  const res = await api.get('/api/metrics/security');
+  return res.data;
+}
+
+// ── Pipeline Metrics ──
+export async function getPipelineMetricsAPI() {
+  const res = await api.get('/api/metrics/pipeline');
+  return res.data;
+}
+
+// ── Attack Heatmap ──
+export async function getAttackHeatmapAPI() {
+  const res = await api.get('/api/metrics/heatmap');
+  return res.data;
+}
+
+// ── Asset Risk ──
+export async function getAssetRiskAPI(assetId: string) {
+  const res = await api.get(`/api/assets/${assetId}/risk`);
+  return res.data;
+}
+
+// ── Assets ──
+export async function getAssetsAPI() {
+  const res = await api.get('/api/assets');
+  return res.data;
+}
+
+export async function createAssetAPI(asset: {
+  hostname: string; ip_address: string; os_type?: string;
+  asset_type?: string; criticality?: string; owner?: string;
+}) {
+  const res = await api.post('/api/assets', asset);
+  return res.data;
+}
+
+export async function deleteAssetAPI(assetId: string) {
+  const res = await api.delete(`/api/assets/${assetId}`);
+  return res.data;
+}
+
+// ── IOC ──
+export async function getIocsAPI(indicatorType?: string) {
+  const queryParams = indicatorType ? `?indicator_type=${indicatorType}` : '';
+  const res = await api.get(`/api/ioc${queryParams}`);
+  return res.data;
+}
+
+export async function createIocAPI(ioc: {
+  indicator_type: string; indicator_value: string;
+  threat_type?: string; severity?: string; confidence?: number;
+  source?: string; description?: string;
+}) {
+  const res = await api.post('/api/ioc', ioc);
+  return res.data;
+}
+
+export async function checkIocAPI(indicator: string) {
+  const res = await api.get(`/api/ioc/check/${indicator}`);
+  return res.data;
+}
+
+// ── Detection Rules ──
+export async function getDetectionRulesAPI() {
+  const res = await api.get('/api/rules');
+  return res.data;
+}
+
+export async function createDetectionRuleAPI(rule: {
+  title: string; description?: string; condition: string;
+  window_seconds?: number; threshold?: number; severity?: string;
+  mitre_technique?: string; mitre_tactic?: string;
+}) {
+  const res = await api.post('/api/rules', rule);
+  return res.data;
+}
+
+export async function deleteDetectionRuleAPI(ruleId: string) {
+  const res = await api.delete(`/api/rules/${ruleId}`);
+  return res.data;
+}
+
+// ── Agents ──
+export async function getAgentsAPI() {
+  const res = await api.get('/api/agents');
+  return res.data;
+}
