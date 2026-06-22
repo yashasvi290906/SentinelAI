@@ -54,9 +54,12 @@ When generating recommendations, prioritize immediate actions first.
 When explaining threats, include the MITRE technique and tactic."""
     
     def __init__(self):
-        self.api_key = os.environ.get("GEMINI_API_KEY", "")
         self.model = "gemini-2.0-flash"
         self.api_base = "https://generativelanguage.googleapis.com/v1beta/models"
+
+    @property
+    def api_key(self) -> str:
+        return os.environ.get("GEMINI_API_KEY", "")
     
     async def chat(
         self,

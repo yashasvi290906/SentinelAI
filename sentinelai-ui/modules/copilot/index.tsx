@@ -1,182 +1,318 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { Bot, Sparkles, Shield, Brain } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Bot, Sparkles, Shield, Brain, Send, AlertTriangle, User, Loader2 } from "lucide-react";
+import { copilotAPI, type CopilotResponse } from "@/lib/api";
 import { usePredictionStore } from "@/stores/predictionStore";
 import { ATTACK_COLORS } from "@/lib/config";
 
+interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  data?: CopilotResponse;
+  timestamp: string;
+}
+
+const QUICK_ACTIONS = [
+  "What's my current threat posture?",
+  "Show active incidents",
+  "Investigate 192.168.1.100",
+  "What should I do about critical alerts?",
+  "Show MITRE ATT&CK coverage",
+  "Summarize today's security activity",
+];
+
 export default function Copilot() {
   const lastPrediction = usePredictionStore((s) => s.lastPrediction);
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: "welcome",
+      role: "assistant",
+      content:
+        "I'm SentinelAI Copilot — your SOC analyst assistant. I have access to your real threat detections, alerts, incidents, and device inventory.\n\nAsk me about:\n• \"Explain incident INC-xxx\" — full RAG analysis\n• \"What are the critical alerts?\" — real-time data\n• \"Investigate 192.168.1.100\" — IP lookup\n• \"What should I do now?\" — response recommendations\n• \"Show MITRE coverage\" — technique mapping",
+      timestamp: new Date().toISOString(),
+    },
+  ]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, scrollToBottom]);
+
+  const sendMessage = async (text?: string) => {
+    const msg = (text || input).trim();
+    if (!msg || loading) return;
+
+    const userMsg: Message = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content: msg,
+      timestamp: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    setInput("");
+    setLoading(true);
+
+    try {
+      const sequence =
+        lastPrediction?.sequence?.map((a) => {
+          const map: Record<string, number> = {
+            DDoS: 0,
+            DoS: 1,
+            PortScan: 2,
+            Bot: 3,
+            WebAttack: 4,
+            BruteForce: 5,
+            Infiltration: 6,
+          };
+          return map[a] ?? 0;
+        }) ?? [];
+      const prediction = lastPrediction?.predictedAttack || "";
+
+      const history = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .slice(-10)
+        .map((m) => ({ role: m.role, content: m.content }));
+
+      const response = await copilotAPI(sequence, prediction, msg, history);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: response.response || response.explanation || "No response generated.",
+          data: response,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    } catch (err) {
+      const msg2 = err instanceof Error ? err.message : "";
+      const content = msg2.includes("401")
+        ? "Authentication required. Please log in first."
+        : msg2.includes("500")
+        ? "Copilot encountered an error. Please try again."
+        : "I couldn't reach the backend. Make sure the SentinelAI server is running on port 8000.";
+      setMessages((prev) => [
+        ...prev,
+        { id: `error-${Date.now()}`, role: "assistant", content, timestamp: new Date().toISOString() },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <div className="h-full p-6 lg:p-8 flex flex-col gap-6 overflow-y-auto">
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* Header */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
+        className="px-6 py-4 border-b flex items-center gap-3 shrink-0"
+        style={{ borderColor: "rgba(0,229,255,0.08)" }}
       >
-        <p className="text-[10px] font-mono tracking-[0.3em] uppercase mb-2" style={{ color: "var(--accent-cyan)" }}>
-          SOC Analyst Assistant
-        </p>
-        <h1 className="text-3xl font-display font-bold" style={{ color: "var(--text-primary)" }}>
-          AI Copilot
-        </h1>
-        <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>
-          Ask questions about attacks, predictions, and get expert recommendations. Use the chat widget (bottom-right) for interactive assistance.
-        </p>
+        <div
+          className="w-10 h-10 rounded-xl flex items-center justify-center"
+          style={{ background: "rgba(0,229,255,0.1)", border: "1px solid rgba(0,229,255,0.2)" }}
+        >
+          <Bot className="w-5 h-5" style={{ color: "var(--accent-cyan)" }} />
+        </div>
+        <div>
+          <h1 className="text-lg font-display font-bold" style={{ color: "var(--text-primary)" }}>
+            AI Copilot
+          </h1>
+          <p className="text-[10px] font-mono" style={{ color: "var(--accent-green)" }}>
+            Online — SOC Analyst Assistant • RAG-enabled
+          </p>
+        </div>
+        <Sparkles className="w-4 h-4 ml-auto" style={{ color: "var(--accent-amber)" }} />
       </motion.div>
 
-      {/* Overview cards */}
-      <div className="grid grid-cols-3 gap-4">
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="rounded-2xl p-5"
-          style={{
-            background: "rgba(8,20,32,0.7)",
-            backdropFilter: "blur(24px)",
-            border: "1px solid rgba(0,229,255,0.08)",
-          }}
-        >
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(0,229,255,0.1)", border: "1px solid rgba(0,229,255,0.2)" }}>
-              <Bot className="w-5 h-5" style={{ color: "var(--accent-cyan)" }} />
-            </div>
-            <div>
-              <p className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>Conversational AI</p>
-              <p className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>Natural language interface</p>
-            </div>
-          </div>
-          <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-            Ask questions in plain English. Get expert-level answers about attack patterns, threat intelligence, and incident response.
-          </p>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15 }}
-          className="rounded-2xl p-5"
-          style={{
-            background: "rgba(8,20,32,0.7)",
-            backdropFilter: "blur(24px)",
-            border: "1px solid rgba(0,229,255,0.08)",
-          }}
-        >
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(255,176,32,0.1)", border: "1px solid rgba(255,176,32,0.2)" }}>
-              <Shield className="w-5 h-5" style={{ color: "var(--accent-amber)" }} />
-            </div>
-            <div>
-              <p className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>Expert Knowledge</p>
-              <p className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>7 attack types covered</p>
-            </div>
-          </div>
-          <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-            Built-in expertise for DDoS, DoS, PortScan, Bot, WebAttack, BruteForce, and Infiltration attack patterns.
-          </p>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="rounded-2xl p-5"
-          style={{
-            background: "rgba(8,20,32,0.7)",
-            backdropFilter: "blur(24px)",
-            border: "1px solid rgba(0,229,255,0.08)",
-          }}
-        >
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(124,77,255,0.1)", border: "1px solid rgba(124,77,255,0.2)" }}>
-              <Sparkles className="w-5 h-5" style={{ color: "var(--accent-purple)" }} />
-            </div>
-            <div>
-              <p className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>Actionable Advice</p>
-              <p className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>Step-by-step recommendations</p>
-            </div>
-          </div>
-          <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-            Get specific, actionable incident response recommendations tailored to the predicted threat.
-          </p>
-        </motion.div>
-      </div>
-
-      {/* Last prediction context */}
-      {lastPrediction && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
-          className="rounded-2xl p-5"
-          style={{
-            background: "rgba(8,20,32,0.7)",
-            backdropFilter: "blur(24px)",
-            border: "1px solid rgba(0,229,255,0.08)",
-          }}
-        >
-          <div className="flex items-center gap-2.5 mb-4">
-            <Brain className="w-4 h-4" style={{ color: "var(--accent-cyan)" }} />
-            <h3 className="text-[11px] font-bold tracking-[0.12em] uppercase" style={{ color: "var(--text-secondary)" }}>
-              Latest Prediction Context
-            </h3>
-          </div>
-          <div className="flex items-center gap-4">
-            <div>
-              <p className="text-2xl font-display font-bold" style={{ color: ATTACK_COLORS[lastPrediction.predictedAttack] || "var(--text-primary)" }}>
-                {lastPrediction.predictedAttack}
-              </p>
-              <p className="text-xs font-mono mt-1" style={{ color: "var(--text-muted)" }}>
-                Confidence: {(lastPrediction.confidence * 100).toFixed(1)}% — {lastPrediction.riskLevel}
-              </p>
-            </div>
-            <div className="flex-1 h-px" style={{ background: "rgba(0,229,255,0.1)" }} />
-            <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-              Ask the copilot about this prediction using the chat widget →
-            </p>
-          </div>
-        </motion.div>
-      )}
-
-      {/* Usage tips */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
-        className="rounded-2xl p-5"
-        style={{
-          background: "rgba(0,229,255,0.03)",
-          border: "1px solid rgba(0,229,255,0.06)",
-        }}
-      >
-        <p className="text-[10px] font-mono tracking-widest uppercase mb-3" style={{ color: "var(--text-muted)" }}>
-          Example Questions
-        </p>
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            "Why was this predicted as DDoS?",
-            "What does BruteForce mean?",
-            "What should I do next?",
-            "Show me recent attack patterns.",
-            "How do I handle an Infiltration alert?",
-            "What indicators should I look for?",
-          ].map((q) => (
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        {messages.map((msg) => (
+          <motion.div
+            key={msg.id}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`flex gap-3 ${msg.role === "user" ? "justify-end" : ""}`}
+          >
+            {msg.role === "assistant" && (
+              <div
+                className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
+                style={{ background: "rgba(0,229,255,0.1)", border: "1px solid rgba(0,229,255,0.2)" }}
+              >
+                <Bot className="w-4 h-4" style={{ color: "var(--accent-cyan)" }} />
+              </div>
+            )}
             <div
-              key={q}
-              className="px-3 py-2 rounded-lg text-xs font-mono"
+              className={`max-w-[75%] rounded-xl px-4 py-3 ${
+                msg.role === "user" ? "rounded-br-sm" : "rounded-bl-sm"
+              }`}
               style={{
-                background: "rgba(8,20,32,0.5)",
-                border: "1px solid rgba(0,229,255,0.06)",
-                color: "var(--text-secondary)",
+                background: msg.role === "user" ? "rgba(0,229,255,0.12)" : "rgba(255,255,255,0.03)",
+                border: `1px solid ${msg.role === "user" ? "rgba(0,229,255,0.2)" : "rgba(0,229,255,0.06)"}`,
               }}
             >
-              &quot;{q}&quot;
+              <p className="text-xs leading-relaxed whitespace-pre-line" style={{ color: "var(--text-secondary)" }}>
+                {msg.content}
+              </p>
+
+              {msg.data?.recommendations && msg.data.recommendations.length > 0 && (
+                <div className="mt-3 space-y-1.5">
+                  <p className="text-[10px] font-mono font-bold" style={{ color: "var(--accent-cyan)" }}>
+                    RECOMMENDATIONS
+                  </p>
+                  {msg.data.recommendations.slice(0, 5).map((rec, i) => (
+                    <div
+                      key={i}
+                      className="flex items-start gap-2 text-[11px] font-mono p-2 rounded-lg"
+                      style={{ background: "rgba(0,229,255,0.03)", border: "1px solid rgba(0,229,255,0.06)" }}
+                    >
+                      <span style={{ color: "var(--accent-cyan)" }}>{i + 1}.</span>
+                      <span style={{ color: "var(--text-secondary)" }}>{rec}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {msg.data?.indicators && msg.data.indicators.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-[10px] font-mono font-bold mb-1.5" style={{ color: "var(--accent-amber)" }}>
+                    INDICATORS
+                  </p>
+                  {msg.data.indicators.map((ind, i) => (
+                    <div key={i} className="flex items-start gap-2 text-[11px] font-mono mb-1">
+                      <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" style={{ color: "var(--accent-amber)" }} />
+                      <span style={{ color: "var(--text-muted)" }}>{ind}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {msg.data?.confidence !== undefined && (
+                <div className="mt-2 flex items-center gap-2">
+                  <Shield className="w-3 h-3" style={{ color: "var(--accent-green)" }} />
+                  <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
+                    Confidence: {(msg.data.confidence * 100).toFixed(1)}%
+                  </span>
+                  {msg.data.prediction && (
+                    <span
+                      className="text-[10px] font-mono font-bold px-2 py-0.5 rounded"
+                      style={{
+                        background: `${ATTACK_COLORS[msg.data.prediction] || "var(--accent-cyan)"}15`,
+                        color: ATTACK_COLORS[msg.data.prediction] || "var(--accent-cyan)",
+                      }}
+                    >
+                      {msg.data.prediction}
+                    </span>
+                  )}
+                  {msg.data.source && (
+                    <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
+                      via {msg.data.source}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
-          ))}
+            {msg.role === "user" && (
+              <div
+                className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
+                style={{ background: "rgba(124,77,255,0.1)", border: "1px solid rgba(124,77,255,0.2)" }}
+              >
+                <User className="w-4 h-4" style={{ color: "var(--accent-purple)" }} />
+              </div>
+            )}
+          </motion.div>
+        ))}
+
+        {loading && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-3">
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+              style={{ background: "rgba(0,229,255,0.1)", border: "1px solid rgba(0,229,255,0.2)" }}
+            >
+              <Bot className="w-4 h-4" style={{ color: "var(--accent-cyan)" }} />
+            </div>
+            <div
+              className="rounded-xl px-4 py-3 rounded-bl-sm"
+              style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(0,229,255,0.06)" }}
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "var(--accent-cyan)", animationDelay: "0ms" }} />
+                <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "var(--accent-cyan)", animationDelay: "150ms" }} />
+                <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "var(--accent-cyan)", animationDelay: "300ms" }} />
+              </div>
+            </div>
+          </motion.div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Quick actions */}
+      {messages.length <= 1 && (
+        <div className="px-6 pb-2">
+          <p className="text-[10px] font-mono tracking-widest uppercase mb-2" style={{ color: "var(--text-muted)" }}>
+            Quick Actions
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {QUICK_ACTIONS.map((q) => (
+              <button
+                key={q}
+                onClick={() => sendMessage(q)}
+                className="px-3 py-1.5 rounded-lg text-[11px] font-mono transition-all hover:scale-[1.02]"
+                style={{
+                  background: "rgba(0,229,255,0.05)",
+                  border: "1px solid rgba(0,229,255,0.1)",
+                  color: "var(--text-secondary)",
+                }}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
         </div>
-      </motion.div>
+      )}
+
+      {/* Input */}
+      <div className="px-6 py-4 border-t shrink-0" style={{ borderColor: "rgba(0,229,255,0.08)" }}>
+        <div className="flex items-center gap-2">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
+            placeholder="Ask about attacks, incidents, alerts, or what to do next..."
+            aria-label="Message input"
+            className="flex-1 px-4 py-3 rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-cyan-400/50"
+            style={{
+              background: "rgba(0,229,255,0.03)",
+              border: "1px solid rgba(0,229,255,0.1)",
+              color: "var(--text-primary)",
+            }}
+            disabled={loading}
+          />
+          <button
+            onClick={() => sendMessage()}
+            disabled={!input.trim() || loading}
+            className="w-10 h-10 rounded-xl flex items-center justify-center transition-all disabled:opacity-30"
+            style={{ background: "rgba(0,229,255,0.1)", border: "1px solid rgba(0,229,255,0.2)" }}
+          >
+            {loading ? (
+              <Loader2 className="w-4 h-4 animate-spin" style={{ color: "var(--accent-cyan)" }} />
+            ) : (
+              <Send className="w-4 h-4" style={{ color: "var(--accent-cyan)" }} />
+            )}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -152,6 +152,7 @@ class CopilotRequest(BaseModel):
     sequence: list[int] = Field(default=[])
     prediction: str = Field(default="")
     question: str = Field(default="", max_length=500)
+    conversation_history: list[dict] = Field(default=[])
 
 
 class ExplainRequest(BaseModel):
@@ -2011,6 +2012,7 @@ async def enhanced_copilot(data: CopilotRequest):
             incidents=incidents,
             devices=devices,
             incident_context=incident_context,
+            conversation_history=data.conversation_history,
         )
 
         prediction = data.prediction

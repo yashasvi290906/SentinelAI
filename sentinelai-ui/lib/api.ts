@@ -157,15 +157,31 @@ export async function healthCheck(): Promise<boolean> {
 export interface CopilotResponse {
   prediction: string;
   confidence: number;
-  explanation: string;
+  response: string;
+  explanation?: string;
+  source: string;
   indicators: string[];
   recommendations: string[];
   kill_chain_stage: string;
   severity_weight: number;
+  detection_summary?: { total: number; by_type: Record<string, number> };
+  alerts_count?: number;
+  incidents_count?: number;
+  devices_count?: number;
 }
 
-export async function copilotAPI(sequence: number[], prediction: string, question: string = ""): Promise<CopilotResponse> {
-  const res = await api.post<CopilotResponse>("/copilot", { sequence, prediction, question });
+export async function copilotAPI(
+  sequence: number[],
+  prediction: string,
+  question: string = "",
+  conversationHistory: Array<{ role: string; content: string }> = []
+): Promise<CopilotResponse> {
+  const res = await api.post<CopilotResponse>("/copilot", {
+    sequence,
+    prediction,
+    question,
+    conversation_history: conversationHistory,
+  });
   return res.data;
 }
 

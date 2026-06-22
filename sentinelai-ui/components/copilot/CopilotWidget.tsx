@@ -60,12 +60,18 @@ export default function CopilotWidget() {
       }) ?? [];
 
       const prediction = lastPrediction?.predictedAttack || "";
-      const response = await copilotAPI(sequence, prediction, input.trim());
+
+      const history = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .slice(-10)
+        .map((m) => ({ role: m.role, content: m.content }));
+
+      const response = await copilotAPI(sequence, prediction, input.trim(), history);
 
       const assistantMsg: Message = {
         id: `assistant-${Date.now()}`,
         role: "assistant",
-        content: response.explanation,
+        content: response.response || response.explanation || "No response generated.",
         data: response,
         timestamp: new Date().toISOString(),
       };
