@@ -2162,6 +2162,71 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
     except Exception:
         pass  # Rule engine is optional; don't break ingestion
 
+    # Run through Sigma rule engine
+    try:
+        from services.sigma_engine import sigma_engine
+        sigma_matches = sigma_engine.evaluate_event(event_dict)
+        for match in sigma_matches:
+            alert = db.create_alert(
+                alert_type="sigma_rule",
+                severity=match.get("level", "medium"),
+                title=match.get("title", "Sigma Rule Match"),
+                description=f"Sigma rule matched: {match.get('title', '')}",
+                source_ip=event_dict.get("source_ip", ""),
+                dest_ip=event_dict.get("dest_ip", ""),
+                source_port=0,
+                dest_port=event_dict.get("dest_port", 0),
+                protocol="",
+                mitre_technique=match.get("mitre_technique", ""),
+                mitre_tactic=match.get("mitre_tactic", ""),
+                evidence=[],
+                recommendations=[],
+                log_id=log_id,
+            )
+            if alert:
+                created_alerts.append(alert)
+                broadcast_queue.appendleft({
+                    "id": f"sigma-{uuid.uuid4().hex[:8]}",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "type": "sigma_alert",
+                    "rule_id": match.get("rule_id", ""),
+                    "rule_title": match.get("title", ""),
+                    "severity": match.get("level", "medium"),
+                    "source_ip": event_dict.get("source_ip", ""),
+                })
+    except Exception:
+        pass  # Sigma engine is optional
+
+    # Check against threat feed IOCs
+    try:
+        from services.threat_feed_service import threat_feed_service
+        src_ip = event_dict.get("source_ip", "")
+        dst_ip = event_dict.get("dest_ip", "")
+        for ip in [src_ip, dst_ip]:
+            if ip:
+                ioc_match = threat_feed_service.match_indicator(ip)
+                if ioc_match:
+                    alert = db.create_alert(
+                        alert_type="threat_intel_match",
+                        severity=ioc_match.get("severity", "HIGH"),
+                        title=f"Known Threat Indicator: {ip}",
+                        description=f"IP {ip} matches threat feed indicator ({ioc_match.get('threat_type', 'unknown')})",
+                        source_ip=src_ip,
+                        dest_ip=dst_ip,
+                        source_port=0,
+                        dest_port=event_dict.get("dest_port", 0),
+                        protocol="",
+                        mitre_technique="",
+                        mitre_tactic="",
+                        evidence=[f"Indicator matched from feed: {ioc_match.get('feed_name', '')}"],
+                        recommendations=["Block IP immediately", "Investigate all connections from this IP"],
+                        log_id=log_id,
+                    )
+                    if alert:
+                        created_alerts.append(alert)
+    except Exception:
+        pass  # Threat feed matching is optional
+
     if detections:
         db.insert_threat_detections(log_id, [d.to_dict() for d in detections])
         for det in detections:
@@ -3300,6 +3365,250 @@ def _get_risk_recommendations(level: str, critical: int, alerts: int) -> list:
 
 
 # =========================
+# Sigma Rule Engine Endpoints
+# =========================
+from services.sigma_engine import sigma_engine
+
+_sigma_match_history: deque = deque(maxlen=1000)
+
+@app.get("/api/sigma/rules")
+async def get_sigma_rules(level: str = None, product: str = None):
+    """List all Sigma rules, optionally filtered."""
+    try:
+        rules = sigma_engine.get_rules()
+        if level:
+            rules = [r for r in rules if r.get("level", "").lower() == level.lower()]
+        if product:
+            rules = [r for r in rules if r.get("logsource", {}).get("product", "").lower() == product.lower()]
+        return {"rules": rules, "total": len(rules)}
+    except Exception as e:
+        logger.error(f"Sigma rules fetch error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch Sigma rules: {str(e)}"})
+
+
+@app.post("/api/sigma/rules")
+async def create_sigma_rule(data: dict):
+    """Import a Sigma rule from YAML or dict."""
+    try:
+        yaml_text = data.get("yaml")
+        if yaml_text:
+            rule_id = sigma_engine.add_rule(yaml_text)
+        else:
+            rule = data.get("rule") or data
+            rule_id = sigma_engine.add_rule_dict(rule)
+        log_structured("info", "sigma", f"Sigma rule imported: {rule_id}")
+        return {"rule_id": rule_id, "status": "created"}
+    except Exception as e:
+        logger.error(f"Sigma rule create error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=400, content={"error": f"Failed to import Sigma rule: {str(e)}"})
+
+
+@app.post("/api/sigma/rules/import-bulk")
+async def import_sigma_rules(data: dict):
+    """Bulk import Sigma rules from a YAML collection."""
+    try:
+        import yaml as _yaml
+        yaml_text = data.get("yaml", "")
+        if not yaml_text:
+            rules_list = data.get("rules", [])
+            if not rules_list:
+                return JSONResponse(status_code=400, content={"error": "Provide 'yaml' string or 'rules' list"})
+            imported_ids = []
+            for rule in rules_list:
+                rule_id = sigma_engine.add_rule_dict(rule)
+                imported_ids.append(rule_id)
+            log_structured("info", "sigma", f"Bulk imported {len(imported_ids)} Sigma rules")
+            return {"imported": len(imported_ids), "rule_ids": imported_ids}
+
+        collection = _yaml.safe_load(yaml_text)
+        if isinstance(collection, list):
+            rules_data = collection
+        elif isinstance(collection, dict) and "rules" in collection:
+            rules_data = collection["rules"]
+        else:
+            rules_data = [collection]
+
+        imported_ids = []
+        errors = []
+        for i, rule in enumerate(rules_data):
+            try:
+                rule_id = sigma_engine.add_rule_dict(rule)
+                imported_ids.append(rule_id)
+            except Exception as e:
+                errors.append({"index": i, "error": str(e)})
+
+        log_structured("info", "sigma", f"Bulk imported {len(imported_ids)} Sigma rules ({len(errors)} errors)")
+        return {"imported": len(imported_ids), "errors": errors, "rule_ids": imported_ids}
+    except Exception as e:
+        logger.error(f"Sigma bulk import error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Bulk import failed: {str(e)}"})
+
+
+@app.delete("/api/sigma/rules/{rule_id}")
+async def delete_sigma_rule(rule_id: str):
+    """Delete a Sigma rule."""
+    try:
+        rule = sigma_engine.get_rule(rule_id)
+        if not rule:
+            return JSONResponse(status_code=404, content={"error": "Sigma rule not found"})
+        sigma_engine.remove_rule(rule_id)
+        log_structured("info", "sigma", f"Sigma rule deleted: {rule_id}")
+        return {"deleted": True, "rule_id": rule_id}
+    except Exception as e:
+        logger.error(f"Sigma rule delete error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to delete Sigma rule: {str(e)}"})
+
+
+@app.get("/api/sigma/matches")
+async def get_sigma_matches(limit: int = 50):
+    """Get recent Sigma rule matches."""
+    try:
+        matches = list(_sigma_match_history)[:limit]
+        return {"matches": matches, "total": len(matches)}
+    except Exception as e:
+        logger.error(f"Sigma matches fetch error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch Sigma matches: {str(e)}"})
+
+
+@app.get("/api/sigma/stats")
+async def get_sigma_stats():
+    """Get Sigma engine statistics."""
+    try:
+        stats = sigma_engine.get_stats()
+        stats["recent_matches"] = len(_sigma_match_history)
+        return stats
+    except Exception as e:
+        logger.error(f"Sigma stats error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch Sigma stats: {str(e)}"})
+
+
+# =========================
+# Threat Feed Endpoints (STIX/TAXII)
+# =========================
+from services.threat_feed_service import threat_feed_service
+
+@app.on_event("startup")
+async def startup_threat_feeds():
+    try:
+        threat_feed_service.init_db()
+        await threat_feed_service.start_background_polling(interval_seconds=3600)
+        log_structured("info", "system", "Threat feed service started with background polling")
+    except Exception as e:
+        logger.error(f"Threat feed startup error: {e}", extra={"module": "api", "action": "error"})
+
+
+@app.get("/api/feeds")
+async def get_threat_feeds():
+    """List configured threat feeds."""
+    try:
+        feeds = threat_feed_service.get_feeds()
+        summary = threat_feed_service.get_feed_summary()
+        return {"feeds": feeds, "summary": summary}
+    except Exception as e:
+        logger.error(f"Feeds fetch error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch feeds: {str(e)}"})
+
+
+@app.post("/api/feeds")
+async def create_threat_feed(data: dict):
+    """Add a new threat feed."""
+    try:
+        from services.threat_feed_service import FeedConfig
+        feed_cfg = FeedConfig(
+            name=data.get("name", ""),
+            url=data.get("url", ""),
+            auth_type=data.get("auth_type", "none"),
+            auth_username=data.get("auth_username", ""),
+            auth_password=data.get("auth_password", ""),
+            collection_id=data.get("collection_id", ""),
+            description=data.get("description", ""),
+            poll_interval_seconds=data.get("poll_interval_seconds", 3600),
+            enabled=data.get("enabled", True),
+            tlp=data.get("tlp", "white"),
+        )
+        feed_id = threat_feed_service.add_feed(feed_cfg)
+        log_structured("info", "feeds", f"Threat feed created: {feed_cfg.name} ({feed_id})")
+        return {"feed_id": feed_id, "name": feed_cfg.name, "status": "created"}
+    except Exception as e:
+        logger.error(f"Feed create error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to create feed: {str(e)}"})
+
+
+@app.post("/api/feeds/{feed_id}/poll")
+async def poll_threat_feed(feed_id: str):
+    """Manually poll a threat feed."""
+    try:
+        feed = threat_feed_service.get_feed(feed_id)
+        if not feed:
+            return JSONResponse(status_code=404, content={"error": "Feed not found"})
+        result = await threat_feed_service.poll_feed(feed_id)
+        log_structured("info", "feeds", f"Manual poll of feed {feed.get('name', feed_id)}: {result}")
+        return {"feed_id": feed_id, "result": result}
+    except Exception as e:
+        logger.error(f"Feed poll error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to poll feed: {str(e)}"})
+
+
+@app.get("/api/stix/objects")
+async def get_stix_objects(type: str = None, limit: int = 50):
+    """Browse imported STIX objects."""
+    try:
+        objects = threat_feed_service.get_stix_objects(stix_type=type, limit=limit)
+        return {"objects": objects, "total": len(objects)}
+    except Exception as e:
+        logger.error(f"STIX objects fetch error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch STIX objects: {str(e)}"})
+
+
+@app.get("/api/stix/indicators")
+async def get_stix_indicators(indicator_type: str = None, limit: int = 100):
+    """Browse parsed STIX indicators."""
+    try:
+        indicators = threat_feed_service.get_indicators(indicator_type=indicator_type, limit=limit)
+        stats = threat_feed_service.get_indicator_stats()
+        return {"indicators": indicators, "total": len(indicators), "stats": stats}
+    except Exception as e:
+        logger.error(f"STIX indicators fetch error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch STIX indicators: {str(e)}"})
+
+
+@app.get("/api/stix/match/{value}")
+async def match_stix_indicator(value: str):
+    """Check if an IOC is a known threat indicator."""
+    try:
+        import re as _re
+        matched = []
+        if _re.match(r"^\d{1,3}(\.\d{1,3}){3}$", value):
+            matched = threat_feed_service.match_ip(value)
+        elif _re.match(r"^[a-fA-F0-9]{32,64}$", value):
+            matched = threat_feed_service.match_hash(value)
+        elif "://" in value:
+            matched = threat_feed_service.match_url(value)
+        elif "@" in value:
+            matched = threat_feed_service.match_email(value)
+        elif "." in value and " " not in value:
+            matched = threat_feed_service.match_domain(value)
+        else:
+            matched = threat_feed_service.match_all(ip=value)
+
+        is_known = len(matched) > 0
+        if is_known:
+            log_structured("warning", "stix", f"Known threat indicator matched: {value}", {
+                "value": value, "match_count": len(matched),
+            })
+
+        return {
+            "value": value,
+            "is_known_threat": is_known,
+            "matches": matched,
+            "match_count": len(matched),
+        }
+    except Exception as e:
+        logger.error(f"STIX match error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Indicator match failed: {str(e)}"})
+
+
+# =========================
 # Global APS Event Recording
 # =========================
 @app.middleware("http")
@@ -3309,3 +3618,686 @@ async def aps_middleware(request: Request, call_next):
     if request.url.path.startswith("/ingest") or request.url.path.startswith("/api"):
         _record_aps_event()
     return response
+
+
+# ================================================================
+# NETWORK TRAFFIC ANALYSIS ENDPOINTS
+# ================================================================
+
+from services.network_analysis_service import network_analysis_engine
+
+
+@app.get("/api/network/flows")
+async def get_network_flows(src_ip: str = None, dst_ip: str = None, limit: int = 100):
+    """Get network flow records."""
+    try:
+        network_analysis_engine._ensure_network_tables()
+        with db._cursor() as cur:
+            query = "SELECT * FROM network_flows WHERE 1=1"
+            params: list = []
+            if src_ip:
+                query += " AND src_ip = ?"
+                params.append(src_ip)
+            if dst_ip:
+                query += " AND dst_ip = ?"
+                params.append(dst_ip)
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            flows = [dict(row) for row in rows]
+        return {"flows": flows, "total": len(flows)}
+    except Exception as e:
+        logger.error(f"Failed to fetch network flows: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch network flows: {str(e)}"})
+
+
+@app.get("/api/network/dns")
+async def get_dns_queries(src_ip: str = None, limit: int = 100):
+    """Get DNS query logs."""
+    try:
+        network_analysis_engine._ensure_network_tables()
+        with db._cursor() as cur:
+            query = "SELECT * FROM dns_queries WHERE 1=1"
+            params: list = []
+            if src_ip:
+                query += " AND src_ip = ?"
+                params.append(src_ip)
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            queries = [dict(row) for row in rows]
+        return {"dns_queries": queries, "total": len(queries)}
+    except Exception as e:
+        logger.error(f"Failed to fetch DNS queries: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch DNS queries: {str(e)}"})
+
+
+@app.get("/api/network/http")
+async def get_http_metadata(src_ip: str = None, limit: int = 100):
+    """Get HTTP request metadata."""
+    try:
+        network_analysis_engine._ensure_network_tables()
+        with db._cursor() as cur:
+            query = "SELECT * FROM http_metadata WHERE 1=1"
+            params: list = []
+            if src_ip:
+                query += " AND src_ip = ?"
+                params.append(src_ip)
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            records = [dict(row) for row in rows]
+        return {"http_requests": records, "total": len(records)}
+    except Exception as e:
+        logger.error(f"Failed to fetch HTTP metadata: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch HTTP metadata: {str(e)}"})
+
+
+@app.get("/api/network/anomalies")
+async def get_network_anomalies(anomaly_type: str = None, severity: str = None, limit: int = 50):
+    """Get detected network anomalies."""
+    try:
+        network_analysis_engine._ensure_network_tables()
+        with db._cursor() as cur:
+            query = "SELECT * FROM network_anomalies WHERE 1=1"
+            params: list = []
+            if anomaly_type:
+                query += " AND anomaly_type = ?"
+                params.append(anomaly_type)
+            if severity:
+                query += " AND severity = ?"
+                params.append(severity)
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            anomalies = [dict(row) for row in rows]
+        return {"anomalies": anomalies, "total": len(anomalies)}
+    except Exception as e:
+        logger.error(f"Failed to fetch network anomalies: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch network anomalies: {str(e)}"})
+
+
+@app.get("/api/network/stats")
+async def get_network_stats():
+    """Get network analysis statistics."""
+    try:
+        flow_stats = network_analysis_engine.get_flow_stats()
+        anomaly_stats = network_analysis_engine.get_anomaly_stats()
+        return {
+            "flows": flow_stats,
+            "anomalies": anomaly_stats,
+        }
+    except Exception as e:
+        logger.error(f"Failed to fetch network stats: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch network stats: {str(e)}"})
+
+
+# ================================================================
+# SOAR PLAYBOOK ENDPOINTS
+# ================================================================
+
+from services.playbook_engine import playbook_engine, playbook_runner
+
+
+@app.get("/api/playbooks")
+async def get_playbooks():
+    """List all playbooks."""
+    try:
+        playbooks = playbook_engine.list_playbooks(enabled_only=False)
+        return {
+            "playbooks": [pb.model_dump() for pb in playbooks],
+            "total": len(playbooks),
+            "available_actions": action_registry.list_actions(),
+        }
+    except Exception as e:
+        logger.error(f"Failed to list playbooks: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to list playbooks: {str(e)}"})
+
+
+@app.post("/api/playbooks")
+async def create_playbook(data: dict):
+    """Create a new playbook."""
+    try:
+        from services.playbook_engine import Playbook
+        playbook = Playbook(**data)
+        playbook_engine.register_playbook(playbook)
+        return {
+            "playbook_id": playbook.id,
+            "name": playbook.name,
+            "status": "created",
+            "playbook": playbook.model_dump(),
+        }
+    except Exception as e:
+        logger.error(f"Failed to create playbook: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to create playbook: {str(e)}"})
+
+
+@app.put("/api/playbooks/{playbook_id}")
+async def update_playbook(playbook_id: str, data: dict):
+    """Update a playbook."""
+    try:
+        existing = playbook_engine.get_playbook(playbook_id)
+        if not existing:
+            return JSONResponse(status_code=404, content={"error": "Playbook not found"})
+
+        from services.playbook_engine import Playbook
+        data["id"] = playbook_id
+        updated_pb = Playbook(**data)
+        playbook_engine.register_playbook(updated_pb)
+        return {
+            "playbook_id": playbook_id,
+            "name": updated_pb.name,
+            "status": "updated",
+            "playbook": updated_pb.model_dump(),
+        }
+    except Exception as e:
+        logger.error(f"Failed to update playbook: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to update playbook: {str(e)}"})
+
+
+@app.delete("/api/playbooks/{playbook_id}")
+async def delete_playbook(playbook_id: str):
+    """Delete a playbook."""
+    try:
+        removed = playbook_engine.unregister_playbook(playbook_id)
+        if not removed:
+            return JSONResponse(status_code=404, content={"error": "Playbook not found"})
+        return {"playbook_id": playbook_id, "status": "deleted"}
+    except Exception as e:
+        logger.error(f"Failed to delete playbook: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to delete playbook: {str(e)}"})
+
+
+@app.post("/api/playbooks/{playbook_id}/execute")
+async def execute_playbook(playbook_id: str, trigger_data: dict = {}):
+    """Execute a playbook against trigger data."""
+    try:
+        playbook = playbook_engine.get_playbook(playbook_id)
+        if not playbook:
+            return JSONResponse(status_code=404, content={"error": "Playbook not found"})
+        if not playbook.enabled:
+            return JSONResponse(status_code=400, content={"error": "Playbook is disabled"})
+
+        execution_id = await playbook_engine.run_playbook(playbook_id, trigger_data)
+        return {
+            "execution_id": execution_id,
+            "playbook_id": playbook_id,
+            "playbook_name": playbook.name,
+            "status": "running",
+        }
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:
+        logger.error(f"Failed to execute playbook: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to execute playbook: {str(e)}"})
+
+
+@app.get("/api/playbooks/executions")
+async def get_playbook_executions(playbook_id: str = None, limit: int = 50):
+    """Get playbook execution history."""
+    try:
+        query = "SELECT * FROM playbook_executions WHERE 1=1"
+        params: list = []
+        if playbook_id:
+            query += " AND playbook_id = ?"
+            params.append(playbook_id)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        results = await db.fetch_all(query, tuple(params))
+        executions = [dict(r) for r in results] if results else []
+        return {"executions": executions, "total": len(executions)}
+    except Exception as e:
+        logger.error(f"Failed to fetch playbook executions: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch playbook executions: {str(e)}"})
+
+
+@app.get("/api/playbooks/executions/{execution_id}")
+async def get_playbook_execution(execution_id: str):
+    """Get details of a specific execution."""
+    try:
+        execution = await playbook_engine.get_execution_status(execution_id)
+        if not execution:
+            return JSONResponse(status_code=404, content={"error": "Execution not found"})
+
+        logs = await playbook_engine.get_execution_logs(execution_id)
+        return {
+            "execution": execution,
+            "action_logs": logs,
+        }
+    except Exception as e:
+        logger.error(f"Failed to fetch execution details: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch execution details: {str(e)}"})
+
+
+# =========================
+# Forensic Chain of Custody Endpoints
+# =========================
+from services.forensic_service import forensic_service
+
+
+@app.post("/api/forensics/evidence")
+async def collect_evidence(data: dict):
+    """Collect new forensic evidence."""
+    try:
+        evidence_type = data.get("evidence_type", "alert")
+        actor = data.get("actor", "system")
+
+        if evidence_type == "alert":
+            result = forensic_service.collect_alert_evidence(data, actor=actor)
+        elif evidence_type == "incident":
+            result = forensic_service.collect_incident_evidence(data, actor=actor)
+        elif evidence_type == "file":
+            file_path = data.get("file_path", "")
+            description = data.get("description", "")
+            if not file_path:
+                return JSONResponse(status_code=400, content={"error": "file_path required for file evidence"})
+            result = forensic_service.collect_file_evidence(file_path, description, actor=actor)
+        elif evidence_type == "memory_dump":
+            host_id = data.get("host_id", "")
+            description = data.get("description", "")
+            if not host_id:
+                return JSONResponse(status_code=400, content={"error": "host_id required for memory dump evidence"})
+            result = forensic_service.collect_memory_dump_evidence(host_id, description, actor=actor)
+        elif evidence_type == "network_capture":
+            description = data.get("description", "")
+            result = forensic_service.collect_network_capture_evidence(description, actor=actor)
+        else:
+            return JSONResponse(status_code=400, content={"error": f"Unknown evidence_type: {evidence_type}"})
+
+        return {"status": "created", **result}
+    except Exception as e:
+        logger.error(f"Evidence collection error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Evidence collection failed: {str(e)}"})
+
+
+@app.get("/api/forensics/evidence")
+async def get_evidence(incident_id: str = None, limit: int = 50):
+    """List evidence items."""
+    try:
+        with db._cursor() as cur:
+            is_pg = hasattr(db, '_init_postgresql')
+            if incident_id:
+                if is_pg:
+                    cur.execute(
+                        "SELECT * FROM evidence WHERE source_id = %s ORDER BY collected_at DESC LIMIT %s",
+                        (incident_id, limit),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT * FROM evidence WHERE source_id = ? ORDER BY collected_at DESC LIMIT ?",
+                        (incident_id, limit),
+                    )
+            else:
+                if is_pg:
+                    cur.execute("SELECT * FROM evidence ORDER BY collected_at DESC LIMIT %s", (limit,))
+                else:
+                    cur.execute("SELECT * FROM evidence ORDER BY collected_at DESC LIMIT ?", (limit,))
+            rows = cur.fetchall()
+
+        if is_pg:
+            items = [dict(row) for row in rows]
+        else:
+            items = [
+                {
+                    "id": row[0], "evidence_type": row[1], "source_type": row[2],
+                    "source_id": row[3], "description": row[4], "sha256_hash": row[5],
+                    "file_path": row[6], "file_size": row[7], "metadata": row[8],
+                    "collected_at": row[9], "status": row[10],
+                }
+                for row in rows
+            ]
+        return {"evidence": items, "count": len(items)}
+    except Exception as e:
+        logger.error(f"Evidence list error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to list evidence: {str(e)}"})
+
+
+@app.get("/api/forensics/evidence/{evidence_id}")
+async def get_evidence_detail(evidence_id: str):
+    """Get evidence details with chain of custody."""
+    try:
+        evidence = forensic_service.get_evidence(evidence_id)
+        if not evidence:
+            return JSONResponse(status_code=404, content={"error": "Evidence not found"})
+
+        chain = forensic_service.get_custody_chain(evidence_id)
+        return {"evidence": evidence, "chain_of_custody": chain}
+    except Exception as e:
+        logger.error(f"Evidence detail error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to get evidence: {str(e)}"})
+
+
+@app.post("/api/forensics/evidence/{evidence_id}/transfer")
+async def transfer_evidence(evidence_id: str, data: dict):
+    """Transfer evidence custody."""
+    try:
+        from_actor = data.get("from_actor", "")
+        to_actor = data.get("to_actor", "")
+        reason = data.get("reason", "")
+
+        if not from_actor or not to_actor:
+            return JSONResponse(status_code=400, content={"error": "from_actor and to_actor are required"})
+
+        result = forensic_service.transfer_custody(evidence_id, from_actor, to_actor, reason)
+        return {"status": "transferred", "transfer_entry": result}
+    except Exception as e:
+        logger.error(f"Evidence transfer error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Evidence transfer failed: {str(e)}"})
+
+
+@app.get("/api/forensics/timeline/{incident_id}")
+async def get_forensic_timeline(incident_id: str):
+    """Get forensic timeline for an incident."""
+    try:
+        timeline = forensic_service.get_incident_timeline(incident_id)
+        return {"incident_id": incident_id, "timeline": timeline, "count": len(timeline)}
+    except Exception as e:
+        logger.error(f"Forensic timeline error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to get timeline: {str(e)}"})
+
+
+@app.get("/api/forensics/verify/{evidence_id}")
+async def verify_evidence(evidence_id: str):
+    """Verify evidence integrity."""
+    try:
+        result = forensic_service.verify_evidence(evidence_id)
+        return result
+    except Exception as e:
+        logger.error(f"Evidence verification error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Evidence verification failed: {str(e)}"})
+
+
+# =========================
+# NIST 800-53 Compliance Endpoints
+# =========================
+from services.compliance_service import compliance_service
+
+
+@app.get("/api/compliance/controls")
+async def get_compliance_controls(family: str = None):
+    """List NIST 800-53 controls with status."""
+    try:
+        controls = compliance_service.get_controls()
+        if family:
+            controls = [c for c in controls if c.get("family", "").upper() == family.upper()]
+        return {"controls": controls, "count": len(controls)}
+    except Exception as e:
+        logger.error(f"Compliance controls error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to get controls: {str(e)}"})
+
+
+@app.get("/api/compliance/score")
+async def get_compliance_score():
+    """Get overall compliance score."""
+    try:
+        score = compliance_service.get_score()
+        return score
+    except Exception as e:
+        logger.error(f"Compliance score error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to get score: {str(e)}"})
+
+
+@app.get("/api/compliance/gaps")
+async def get_compliance_gaps():
+    """Get compliance gaps with remediation."""
+    try:
+        gaps = compliance_service.get_gaps()
+        return {"gaps": gaps, "count": len(gaps)}
+    except Exception as e:
+        logger.error(f"Compliance gaps error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to get gaps: {str(e)}"})
+
+
+@app.post("/api/compliance/assess")
+async def run_compliance_assessment():
+    """Run a compliance assessment."""
+    try:
+        result = compliance_service.run_assessment()
+        return result
+    except Exception as e:
+        logger.error(f"Compliance assessment error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Compliance assessment failed: {str(e)}"})
+
+
+@app.get("/api/compliance/assessments")
+async def get_compliance_assessments(limit: int = 10):
+    """Get assessment history."""
+    try:
+        with db._cursor() as cur:
+            is_pg = hasattr(db, '_init_postgresql')
+            if is_pg:
+                cur.execute(
+                    "SELECT assessment_id, score, total_controls, compliant_count, non_compliant_count, created_at "
+                    "FROM compliance_assessments ORDER BY created_at DESC LIMIT %s",
+                    (limit,),
+                )
+            else:
+                cur.execute(
+                    "SELECT assessment_id, score, total_controls, compliant_count, non_compliant_count, created_at "
+                    "FROM compliance_assessments ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                )
+            rows = cur.fetchall()
+
+        if is_pg:
+            assessments = [dict(row) for row in rows]
+        else:
+            assessments = [
+                {
+                    "assessment_id": row[0], "score": row[1], "total_controls": row[2],
+                    "compliant_count": row[3], "non_compliant_count": row[4], "created_at": row[5],
+                }
+                for row in rows
+            ]
+        return {"assessments": assessments, "count": len(assessments)}
+    except Exception as e:
+        logger.error(f"Compliance assessments error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to get assessments: {str(e)}"})
+
+
+@app.get("/api/compliance/report")
+async def get_compliance_report():
+    """Generate compliance report."""
+    try:
+        score = compliance_service.get_score()
+        gaps = compliance_service.get_gaps()
+        controls = compliance_service.get_controls()
+
+        compliant = sum(1 for g in gaps if g.get("status") == "compliant")
+        non_compliant = sum(1 for g in gaps if g.get("status") != "compliant")
+
+        report = {
+            "title": "NIST 800-53 Compliance Report",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "summary": {
+                "overall_score": score.get("score", 0),
+                "total_controls": score.get("total_controls", len(controls)),
+                "compliant": score.get("compliant", compliant),
+                "non_compliant": score.get("non_compliant", non_compliant),
+                "last_assessment": score.get("created_at", ""),
+            },
+            "controls": controls,
+            "gaps": gaps,
+        }
+        return {"report": report}
+    except Exception as e:
+        logger.error(f"Compliance report error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to generate report: {str(e)}"})
+
+
+# =========================
+# Insider Threat Detection Endpoints
+# =========================
+from services.insider_threat_service import insider_threat_engine
+
+
+@app.get("/api/insider/baselines")
+async def get_user_baselines(user_id: str = None):
+    """Get user behavior baselines."""
+    try:
+        if user_id:
+            baselines = insider_threat_engine.profiler.get_all_baselines(user_id)
+            return {"user_id": user_id, "baselines": baselines}
+
+        with db._cursor() as cur:
+            is_pg = hasattr(db, '_init_postgresql')
+            if is_pg:
+                cur.execute("SELECT DISTINCT user_id FROM user_behavior_baselines")
+            else:
+                cur.execute("SELECT DISTINCT user_id FROM user_behavior_baselines")
+            rows = cur.fetchall()
+
+        all_baselines = {}
+        for row in rows:
+            uid = row["user_id"] if is_pg else row[0]
+            if uid:
+                all_baselines[uid] = insider_threat_engine.profiler.get_all_baselines(uid)
+
+        return {"baselines": all_baselines, "user_count": len(all_baselines)}
+    except Exception as e:
+        logger.error(f"Insider baselines error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to get baselines: {str(e)}"})
+
+
+@app.get("/api/insider/anomalies")
+async def get_user_anomalies(user_id: str = None, severity: str = None, limit: int = 50):
+    """Get detected user anomalies."""
+    try:
+        if user_id:
+            anomalies = insider_threat_engine.get_user_anomalies(user_id, limit=limit)
+            if severity:
+                anomalies = [a for a in anomalies if a.get("severity", "").upper() == severity.upper()]
+            return {"user_id": user_id, "anomalies": anomalies, "count": len(anomalies)}
+
+        with db._cursor() as cur:
+            is_pg = hasattr(db, '_init_postgresql')
+            if is_pg:
+                if severity:
+                    cur.execute(
+                        "SELECT * FROM user_anomalies WHERE severity = %s ORDER BY detected_at DESC LIMIT %s",
+                        (severity.upper(), limit),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT * FROM user_anomalies ORDER BY detected_at DESC LIMIT %s",
+                        (limit,),
+                    )
+            else:
+                if severity:
+                    cur.execute(
+                        "SELECT * FROM user_anomalies WHERE severity = ? ORDER BY detected_at DESC LIMIT ?",
+                        (severity.upper(), limit),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT * FROM user_anomalies ORDER BY detected_at DESC LIMIT ?",
+                        (limit,),
+                    )
+            rows = cur.fetchall()
+
+        if is_pg:
+            anomalies = [dict(row) for row in rows]
+        else:
+            anomalies = [
+                {
+                    "id": row[0], "user_id": row[1], "anomaly_type": row[2],
+                    "z_score": row[3], "observed_value": row[4], "baseline_mean": row[5],
+                    "severity": row[6], "details": row[7], "detected_at": row[8], "status": row[9],
+                }
+                for row in rows
+            ]
+        return {"anomalies": anomalies, "count": len(anomalies)}
+    except Exception as e:
+        logger.error(f"Insider anomalies error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to get anomalies: {str(e)}"})
+
+
+@app.get("/api/insider/risk-scores")
+async def get_insider_risk_scores():
+    """Get user risk scores."""
+    try:
+        risk_scores = insider_threat_engine.risk_scorer.get_all_risk_scores()
+        return {"risk_scores": risk_scores, "count": len(risk_scores)}
+    except Exception as e:
+        logger.error(f"Insider risk scores error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to get risk scores: {str(e)}"})
+
+
+@app.post("/api/insider/cases")
+async def create_insider_case(data: dict):
+    """Create an insider threat investigation case."""
+    try:
+        user_id = data.get("user_id", "")
+        anomaly_ids = data.get("anomaly_ids", [])
+        risk_level = data.get("risk_level", "MEDIUM")
+
+        if not user_id:
+            return JSONResponse(status_code=400, content={"error": "user_id is required"})
+
+        result = insider_threat_engine.create_case(user_id, anomaly_ids, risk_level)
+        return {"status": "created", **result}
+    except Exception as e:
+        logger.error(f"Insider case creation error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to create case: {str(e)}"})
+
+
+@app.get("/api/insider/cases")
+async def get_insider_cases(status: str = None, limit: int = 50):
+    """List insider threat cases."""
+    try:
+        cases = insider_threat_engine.get_cases(status=status, limit=limit)
+        return {"cases": cases, "count": len(cases)}
+    except Exception as e:
+        logger.error(f"Insider cases error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to get cases: {str(e)}"})
+
+
+@app.put("/api/insider/cases/{case_id}")
+async def update_insider_case(case_id: str, data: dict):
+    """Update an insider threat case."""
+    try:
+        case = insider_threat_engine.get_case(case_id)
+        if not case:
+            return JSONResponse(status_code=404, content={"error": "Case not found"})
+
+        now = datetime.now(timezone.utc).isoformat()
+        status_val = data.get("status")
+        assigned_to = data.get("assigned_to")
+        resolution_notes = data.get("resolution_notes", "")
+
+        if status_val == "closed":
+            insider_threat_engine.close_case(case_id, resolution_notes)
+            return {"status": "closed", "case_id": case_id}
+
+        with db._cursor() as cur:
+            is_pg = hasattr(db, '_init_postgresql')
+            updates = []
+            params = []
+
+            if assigned_to is not None:
+                updates.append("assigned_to = %s" if is_pg else "assigned_to = ?")
+                params.append(assigned_to)
+            if status_val is not None:
+                updates.append("status = %s" if is_pg else "status = ?")
+                params.append(status_val)
+
+            updates.append("updated_at = %s" if is_pg else "updated_at = ?")
+            params.append(now)
+            params.append(case_id)
+
+            if updates:
+                set_clause = ", ".join(updates)
+                if is_pg:
+                    cur.execute(f"UPDATE insider_threat_cases SET {set_clause} WHERE id = %s", tuple(params))
+                else:
+                    cur.execute(f"UPDATE insider_threat_cases SET {set_clause} WHERE id = ?", tuple(params))
+
+        updated_case = insider_threat_engine.get_case(case_id)
+        return {"status": "updated", "case": updated_case}
+    except Exception as e:
+        logger.error(f"Insider case update error: {e}", extra={"module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to update case: {str(e)}"})

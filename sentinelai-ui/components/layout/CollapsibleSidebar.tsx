@@ -28,6 +28,13 @@ import {
   Upload,
   Search,
   Server,
+  FileCode,
+  Radio,
+  Wifi,
+  PlayCircle,
+  Scale,
+  Lock,
+  Eye,
 } from 'lucide-react';
 import { useGlobalStore } from '@/stores/globalStore';
 import { useSystemStore } from '@/stores/systemStore';
@@ -65,6 +72,16 @@ const secondaryNav = [
   { id: 'incidents', label: 'Incidents', icon: ShieldAlert },
   { id: 'devices', label: 'Devices', icon: Server },
   { id: 'settings', label: 'Settings', icon: Settings },
+];
+
+const govNav = [
+  { id: 'sigma-rules', label: 'Sigma Rules', icon: FileCode },
+  { id: 'threat-feeds', label: 'Threat Feeds', icon: Radio },
+  { id: 'network-analysis', label: 'Network Analysis', icon: Wifi },
+  { id: 'playbooks', label: 'SOAR Playbooks', icon: PlayCircle },
+  { id: 'forensics', label: 'Forensics', icon: Lock },
+  { id: 'compliance', label: 'NIST Compliance', icon: Scale },
+  { id: 'insider-threat', label: 'Insider Threat', icon: Eye },
 ];
 
 function NavItem({
@@ -241,6 +258,30 @@ export default function CollapsibleSidebar() {
         </AnimatePresence>
 
         {secondaryNav.map((item) => (
+          <NavItem
+            key={item.id}
+            item={item}
+            isActive={activeModule === item.id}
+            expanded={expanded}
+            onClick={() => setActiveModule(item.id)}
+          />
+        ))}
+
+        <AnimatePresence>
+          {expanded && (
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="text-[9px] font-mono tracking-widest px-3 py-2 mt-3 uppercase"
+              style={{ color: 'var(--accent-amber)', borderTop: '1px solid rgba(0,229,255,0.06)', paddingTop: '12px' }}
+            >
+              Government-Grade
+            </motion.p>
+          )}
+        </AnimatePresence>
+
+        {govNav.map((item) => (
           <NavItem
             key={item.id}
             item={item}

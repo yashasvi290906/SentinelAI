@@ -386,6 +386,320 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_threat_detections_severity ON threat_detections(severity);
                 CREATE INDEX IF NOT EXISTS idx_threat_detections_threat_type ON threat_detections(threat_type);
                 CREATE INDEX IF NOT EXISTS idx_uploaded_logs_user_id ON uploaded_logs(user_id);
+
+                CREATE TABLE IF NOT EXISTS sigma_rules (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    author TEXT,
+                    status TEXT DEFAULT 'experimental',
+                    level TEXT DEFAULT 'medium',
+                    logsource_category TEXT,
+                    logsource_product TEXT,
+                    logsource_service TEXT,
+                    detection_yaml TEXT NOT NULL,
+                    condition_text TEXT NOT NULL,
+                    mitre_techniques TEXT DEFAULT '[]',
+                    mitre_tactics TEXT DEFAULT '[]',
+                    tags TEXT DEFAULT '[]',
+                    falsepositives TEXT DEFAULT '[]',
+                    enabled INTEGER DEFAULT 1,
+                    created_at TEXT,
+                    updated_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS sigma_matches (
+                    id TEXT PRIMARY KEY,
+                    rule_id TEXT NOT NULL,
+                    event_id TEXT,
+                    matched_at TEXT,
+                    event_data TEXT,
+                    FOREIGN KEY (rule_id) REFERENCES sigma_rules(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS threat_feeds (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    feed_type TEXT NOT NULL,
+                    url TEXT,
+                    taxii_version TEXT DEFAULT '2.1',
+                    auth_type TEXT DEFAULT 'none',
+                    auth_config TEXT DEFAULT '{}',
+                    poll_interval_seconds INTEGER DEFAULT 3600,
+                    last_polled_at TEXT,
+                    enabled INTEGER DEFAULT 1,
+                    organization_id TEXT,
+                    created_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS stix_objects (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL,
+                    spec_version TEXT DEFAULT '2.1',
+                    created_at_stix TEXT,
+                    modified_at_stix TEXT,
+                    name TEXT,
+                    description TEXT,
+                    pattern TEXT,
+                    valid_from TEXT,
+                    valid_until TEXT,
+                    labels TEXT DEFAULT '[]',
+                    confidence INTEGER,
+                    object_marking_ref TEXT,
+                    raw_json TEXT NOT NULL,
+                    feed_id TEXT,
+                    imported_at TEXT,
+                    FOREIGN KEY (feed_id) REFERENCES threat_feeds(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS stix_indicators (
+                    id TEXT PRIMARY KEY,
+                    stix_object_id TEXT NOT NULL,
+                    indicator_type TEXT NOT NULL,
+                    indicator_value TEXT NOT NULL,
+                    confidence INTEGER,
+                    severity TEXT,
+                    threat_types TEXT DEFAULT '[]',
+                    kill_chain_phases TEXT DEFAULT '[]',
+                    valid_from TEXT,
+                    valid_until TEXT,
+                    feed_id TEXT,
+                    FOREIGN KEY (stix_object_id) REFERENCES stix_objects(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS network_flows (
+                    id TEXT PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    src_ip TEXT NOT NULL,
+                    dst_ip TEXT NOT NULL,
+                    src_port INTEGER,
+                    dst_port INTEGER,
+                    protocol INTEGER,
+                    bytes_sent INTEGER DEFAULT 0,
+                    bytes_received INTEGER DEFAULT 0,
+                    packets_sent INTEGER DEFAULT 0,
+                    packets_received INTEGER DEFAULT 0,
+                    flow_duration_ms INTEGER DEFAULT 0,
+                    flags TEXT,
+                    application TEXT,
+                    source TEXT,
+                    device_id TEXT,
+                    created_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS dns_queries (
+                    id TEXT PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    src_ip TEXT,
+                    query_name TEXT NOT NULL,
+                    query_type TEXT,
+                    response_code TEXT,
+                    response_data TEXT,
+                    resolved INTEGER DEFAULT 1,
+                    ttl INTEGER,
+                    source TEXT,
+                    created_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS http_metadata (
+                    id TEXT PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    src_ip TEXT,
+                    dst_ip TEXT,
+                    dst_port INTEGER DEFAULT 80,
+                    method TEXT,
+                    host TEXT,
+                    uri TEXT,
+                    user_agent TEXT,
+                    status_code INTEGER,
+                    response_size INTEGER DEFAULT 0,
+                    content_type TEXT,
+                    tls_version TEXT,
+                    ja3_hash TEXT,
+                    source TEXT,
+                    created_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS network_anomalies (
+                    id TEXT PRIMARY KEY,
+                    anomaly_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    src_ip TEXT,
+                    dst_ip TEXT,
+                    description TEXT,
+                    evidence TEXT,
+                    mitre_technique TEXT,
+                    mitre_tactic TEXT,
+                    detected_at TEXT,
+                    resolved INTEGER DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS playbooks (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    version TEXT DEFAULT '1.0.0',
+                    author TEXT,
+                    tags TEXT DEFAULT '[]',
+                    severity_threshold TEXT DEFAULT 'MEDIUM',
+                    mitre_tactics TEXT DEFAULT '[]',
+                    trigger_type TEXT DEFAULT 'alert',
+                    trigger_filter TEXT DEFAULT '{}',
+                    steps_json TEXT NOT NULL,
+                    enabled INTEGER DEFAULT 1,
+                    execution_count INTEGER DEFAULT 0,
+                    last_executed_at TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS playbook_executions (
+                    id TEXT PRIMARY KEY,
+                    playbook_id TEXT NOT NULL,
+                    trigger_event_id TEXT,
+                    trigger_data TEXT,
+                    status TEXT DEFAULT 'running',
+                    step_results TEXT,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    duration_ms INTEGER,
+                    actions_taken TEXT DEFAULT '[]',
+                    FOREIGN KEY (playbook_id) REFERENCES playbooks(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS playbook_action_log (
+                    id TEXT PRIMARY KEY,
+                    execution_id TEXT NOT NULL,
+                    step_id TEXT NOT NULL,
+                    action_type TEXT NOT NULL,
+                    integration TEXT,
+                    action_name TEXT,
+                    input_params TEXT,
+                    output_result TEXT,
+                    status TEXT,
+                    error_message TEXT,
+                    executed_at TEXT,
+                    FOREIGN KEY (execution_id) REFERENCES playbook_executions(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS evidence (
+                    id TEXT PRIMARY KEY,
+                    incident_id TEXT,
+                    alert_id TEXT,
+                    evidence_type TEXT NOT NULL,
+                    description TEXT,
+                    file_name TEXT,
+                    file_path TEXT,
+                    file_size INTEGER,
+                    sha256_hash TEXT NOT NULL,
+                    md5_hash TEXT,
+                    collected_by TEXT,
+                    collected_at TEXT NOT NULL,
+                    chain_of_custody TEXT DEFAULT '[]',
+                    metadata TEXT DEFAULT '{}',
+                    created_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS evidence_chain (
+                    id TEXT PRIMARY KEY,
+                    evidence_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    actor_name TEXT,
+                    details TEXT,
+                    timestamp TEXT NOT NULL,
+                    previous_hash TEXT,
+                    entry_hash TEXT NOT NULL,
+                    FOREIGN KEY (evidence_id) REFERENCES evidence(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS forensic_timeline (
+                    id TEXT PRIMARY KEY,
+                    incident_id TEXT,
+                    event_time TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    source TEXT,
+                    description TEXT,
+                    evidence_id TEXT,
+                    confidence REAL DEFAULT 1.0,
+                    created_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS nist_controls (
+                    id TEXT PRIMARY KEY,
+                    control_id TEXT NOT NULL,
+                    family TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    implementation_status TEXT DEFAULT 'not_assessed',
+                    evidence_ids TEXT DEFAULT '[]',
+                    responsible_party TEXT,
+                    last_assessed_at TEXT,
+                    next_assessment_at TEXT,
+                    notes TEXT,
+                    implementation_guidance TEXT,
+                    automated_check TEXT,
+                    created_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS compliance_assessments (
+                    id TEXT PRIMARY KEY,
+                    assessment_date TEXT NOT NULL,
+                    framework TEXT DEFAULT 'NIST-800-53',
+                    total_controls INTEGER,
+                    implemented INTEGER,
+                    partial INTEGER,
+                    not_implemented INTEGER,
+                    not_assessed INTEGER,
+                    compliance_score REAL,
+                    assessed_by TEXT,
+                    notes TEXT,
+                    created_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS user_behavior_baselines (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    metric_type TEXT NOT NULL,
+                    baseline_value REAL NOT NULL,
+                    standard_deviation REAL NOT NULL,
+                    sample_count INTEGER DEFAULT 0,
+                    last_updated TEXT,
+                    UNIQUE(user_id, metric_type)
+                );
+
+                CREATE TABLE IF NOT EXISTS user_anomalies (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    anomaly_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    description TEXT,
+                    baseline_value REAL,
+                    observed_value REAL,
+                    deviation_score REAL,
+                    evidence TEXT,
+                    mitre_technique TEXT,
+                    mitre_tactic TEXT,
+                    detected_at TEXT,
+                    resolved INTEGER DEFAULT 0,
+                    assigned_to TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS insider_threat_cases (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    case_status TEXT DEFAULT 'open',
+                    risk_level TEXT,
+                    anomaly_ids TEXT DEFAULT '[]',
+                    assigned_to TEXT,
+                    description TEXT,
+                    findings TEXT,
+                    resolution TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                );
             """)
 
     def _create_tables_postgresql(self):
@@ -687,6 +1001,314 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_threat_detections_log_id ON threat_detections(log_id);
                 CREATE INDEX IF NOT EXISTS idx_threat_detections_severity ON threat_detections(severity);
                 CREATE INDEX IF NOT EXISTS idx_uploaded_logs_user_id ON uploaded_logs(user_id);
+
+                CREATE TABLE IF NOT EXISTS sigma_rules (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    author TEXT,
+                    status TEXT DEFAULT 'experimental',
+                    level TEXT DEFAULT 'medium',
+                    logsource_category TEXT,
+                    logsource_product TEXT,
+                    logsource_service TEXT,
+                    detection_yaml TEXT NOT NULL,
+                    condition_text TEXT NOT NULL,
+                    mitre_techniques TEXT DEFAULT '[]',
+                    mitre_tactics TEXT DEFAULT '[]',
+                    tags TEXT DEFAULT '[]',
+                    falsepositives TEXT DEFAULT '[]',
+                    enabled INTEGER DEFAULT 1,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ
+                );
+
+                CREATE TABLE IF NOT EXISTS sigma_matches (
+                    id TEXT PRIMARY KEY,
+                    rule_id TEXT NOT NULL REFERENCES sigma_rules(id),
+                    event_id TEXT,
+                    matched_at TIMESTAMPTZ DEFAULT NOW(),
+                    event_data TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS threat_feeds (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    feed_type TEXT NOT NULL,
+                    url TEXT,
+                    taxii_version TEXT DEFAULT '2.1',
+                    auth_type TEXT DEFAULT 'none',
+                    auth_config TEXT DEFAULT '{}',
+                    poll_interval_seconds INTEGER DEFAULT 3600,
+                    last_polled_at TIMESTAMPTZ,
+                    enabled INTEGER DEFAULT 1,
+                    organization_id TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS stix_objects (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL,
+                    spec_version TEXT DEFAULT '2.1',
+                    created_at_stix TIMESTAMPTZ,
+                    modified_at_stix TIMESTAMPTZ,
+                    name TEXT,
+                    description TEXT,
+                    pattern TEXT,
+                    valid_from TIMESTAMPTZ,
+                    valid_until TIMESTAMPTZ,
+                    labels TEXT DEFAULT '[]',
+                    confidence INTEGER,
+                    object_marking_ref TEXT,
+                    raw_json TEXT NOT NULL,
+                    feed_id TEXT REFERENCES threat_feeds(id),
+                    imported_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS stix_indicators (
+                    id TEXT PRIMARY KEY,
+                    stix_object_id TEXT NOT NULL REFERENCES stix_objects(id),
+                    indicator_type TEXT NOT NULL,
+                    indicator_value TEXT NOT NULL,
+                    confidence INTEGER,
+                    severity TEXT,
+                    threat_types TEXT DEFAULT '[]',
+                    kill_chain_phases TEXT DEFAULT '[]',
+                    valid_from TIMESTAMPTZ,
+                    valid_until TIMESTAMPTZ,
+                    feed_id TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS network_flows (
+                    id TEXT PRIMARY KEY,
+                    timestamp TIMESTAMPTZ NOT NULL,
+                    src_ip TEXT NOT NULL,
+                    dst_ip TEXT NOT NULL,
+                    src_port INTEGER,
+                    dst_port INTEGER,
+                    protocol INTEGER,
+                    bytes_sent INTEGER DEFAULT 0,
+                    bytes_received INTEGER DEFAULT 0,
+                    packets_sent INTEGER DEFAULT 0,
+                    packets_received INTEGER DEFAULT 0,
+                    flow_duration_ms INTEGER DEFAULT 0,
+                    flags TEXT,
+                    application TEXT,
+                    source TEXT,
+                    device_id TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS dns_queries (
+                    id TEXT PRIMARY KEY,
+                    timestamp TIMESTAMPTZ NOT NULL,
+                    src_ip TEXT,
+                    query_name TEXT NOT NULL,
+                    query_type TEXT,
+                    response_code TEXT,
+                    response_data TEXT,
+                    resolved INTEGER DEFAULT 1,
+                    ttl INTEGER,
+                    source TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS http_metadata (
+                    id TEXT PRIMARY KEY,
+                    timestamp TIMESTAMPTZ NOT NULL,
+                    src_ip TEXT,
+                    dst_ip TEXT,
+                    dst_port INTEGER DEFAULT 80,
+                    method TEXT,
+                    host TEXT,
+                    uri TEXT,
+                    user_agent TEXT,
+                    status_code INTEGER,
+                    response_size INTEGER DEFAULT 0,
+                    content_type TEXT,
+                    tls_version TEXT,
+                    ja3_hash TEXT,
+                    source TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS network_anomalies (
+                    id TEXT PRIMARY KEY,
+                    anomaly_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    src_ip TEXT,
+                    dst_ip TEXT,
+                    description TEXT,
+                    evidence TEXT,
+                    mitre_technique TEXT,
+                    mitre_tactic TEXT,
+                    detected_at TIMESTAMPTZ DEFAULT NOW(),
+                    resolved INTEGER DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS playbooks (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    version TEXT DEFAULT '1.0.0',
+                    author TEXT,
+                    tags TEXT DEFAULT '[]',
+                    severity_threshold TEXT DEFAULT 'MEDIUM',
+                    mitre_tactics TEXT DEFAULT '[]',
+                    trigger_type TEXT DEFAULT 'alert',
+                    trigger_filter TEXT DEFAULT '{}',
+                    steps_json TEXT NOT NULL,
+                    enabled INTEGER DEFAULT 1,
+                    execution_count INTEGER DEFAULT 0,
+                    last_executed_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ
+                );
+
+                CREATE TABLE IF NOT EXISTS playbook_executions (
+                    id TEXT PRIMARY KEY,
+                    playbook_id TEXT NOT NULL REFERENCES playbooks(id),
+                    trigger_event_id TEXT,
+                    trigger_data TEXT,
+                    status TEXT DEFAULT 'running',
+                    step_results TEXT,
+                    started_at TIMESTAMPTZ DEFAULT NOW(),
+                    completed_at TIMESTAMPTZ,
+                    duration_ms INTEGER,
+                    actions_taken TEXT DEFAULT '[]'
+                );
+
+                CREATE TABLE IF NOT EXISTS playbook_action_log (
+                    id TEXT PRIMARY KEY,
+                    execution_id TEXT NOT NULL REFERENCES playbook_executions(id),
+                    step_id TEXT NOT NULL,
+                    action_type TEXT NOT NULL,
+                    integration TEXT,
+                    action_name TEXT,
+                    input_params TEXT,
+                    output_result TEXT,
+                    status TEXT,
+                    error_message TEXT,
+                    executed_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS evidence (
+                    id TEXT PRIMARY KEY,
+                    incident_id TEXT,
+                    alert_id TEXT,
+                    evidence_type TEXT NOT NULL,
+                    description TEXT,
+                    file_name TEXT,
+                    file_path TEXT,
+                    file_size INTEGER,
+                    sha256_hash TEXT NOT NULL,
+                    md5_hash TEXT,
+                    collected_by TEXT,
+                    collected_at TIMESTAMPTZ NOT NULL,
+                    chain_of_custody TEXT DEFAULT '[]',
+                    metadata TEXT DEFAULT '{}',
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS evidence_chain (
+                    id TEXT PRIMARY KEY,
+                    evidence_id TEXT NOT NULL REFERENCES evidence(id),
+                    action TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    actor_name TEXT,
+                    details TEXT,
+                    timestamp TIMESTAMPTZ NOT NULL,
+                    previous_hash TEXT,
+                    entry_hash TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS forensic_timeline (
+                    id TEXT PRIMARY KEY,
+                    incident_id TEXT,
+                    event_time TIMESTAMPTZ NOT NULL,
+                    event_type TEXT NOT NULL,
+                    source TEXT,
+                    description TEXT,
+                    evidence_id TEXT,
+                    confidence REAL DEFAULT 1.0,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS nist_controls (
+                    id TEXT PRIMARY KEY,
+                    control_id TEXT NOT NULL,
+                    family TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    implementation_status TEXT DEFAULT 'not_assessed',
+                    evidence_ids TEXT DEFAULT '[]',
+                    responsible_party TEXT,
+                    last_assessed_at TIMESTAMPTZ,
+                    next_assessment_at TIMESTAMPTZ,
+                    notes TEXT,
+                    implementation_guidance TEXT,
+                    automated_check TEXT,
+                    created_at TIMESTAMPTZ
+                );
+
+                CREATE TABLE IF NOT EXISTS compliance_assessments (
+                    id TEXT PRIMARY KEY,
+                    assessment_date TIMESTAMPTZ NOT NULL,
+                    framework TEXT DEFAULT 'NIST-800-53',
+                    total_controls INTEGER,
+                    implemented INTEGER,
+                    partial INTEGER,
+                    not_implemented INTEGER,
+                    not_assessed INTEGER,
+                    compliance_score REAL,
+                    assessed_by TEXT,
+                    notes TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS user_behavior_baselines (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    metric_type TEXT NOT NULL,
+                    baseline_value REAL NOT NULL,
+                    standard_deviation REAL NOT NULL,
+                    sample_count INTEGER DEFAULT 0,
+                    last_updated TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(user_id, metric_type)
+                );
+
+                CREATE TABLE IF NOT EXISTS user_anomalies (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    anomaly_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    description TEXT,
+                    baseline_value REAL,
+                    observed_value REAL,
+                    deviation_score REAL,
+                    evidence TEXT,
+                    mitre_technique TEXT,
+                    mitre_tactic TEXT,
+                    detected_at TIMESTAMPTZ DEFAULT NOW(),
+                    resolved INTEGER DEFAULT 0,
+                    assigned_to TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS insider_threat_cases (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    case_status TEXT DEFAULT 'open',
+                    risk_level TEXT,
+                    anomaly_ids TEXT DEFAULT '[]',
+                    assigned_to TEXT,
+                    description TEXT,
+                    findings TEXT,
+                    resolution TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ
+                );
             """)
 
     def create_user(self, email: str, password_hash: str, name: str, role: str = 'analyst') -> Dict[str, Any]:

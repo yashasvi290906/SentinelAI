@@ -42,6 +42,13 @@ const SecurityMetrics = dynamic(() => import("@/modules/security-metrics"), { lo
 const PipelineVisualizer = dynamic(() => import("@/modules/pipeline-visualizer"), { loading: () => <LoadingSkeleton /> });
 const Vulnerabilities = dynamic(() => import("@/modules/vulnerabilities"), { loading: () => <LoadingSkeleton /> });
 const AgentHealth = dynamic(() => import("@/modules/agent-health"), { loading: () => <LoadingSkeleton /> });
+const SigmaRules = dynamic(() => import("@/modules/sigma-rules"), { loading: () => <LoadingSkeleton /> });
+const ThreatFeeds = dynamic(() => import("@/modules/threat-feeds"), { loading: () => <LoadingSkeleton /> });
+const NetworkAnalysis = dynamic(() => import("@/modules/network-analysis"), { loading: () => <LoadingSkeleton /> });
+const Playbooks = dynamic(() => import("@/modules/playbooks"), { loading: () => <LoadingSkeleton /> });
+const Forensics = dynamic(() => import("@/modules/forensics"), { loading: () => <LoadingSkeleton /> });
+const Compliance = dynamic(() => import("@/modules/compliance"), { loading: () => <LoadingSkeleton /> });
+const InsiderThreat = dynamic(() => import("@/modules/insider-threat"), { loading: () => <LoadingSkeleton /> });
 
 const MODULE_MAP: Record<string, { component: React.ComponentType; label: string }> = {
   dashboard: { component: Dashboard, label: "Dashboard" },
@@ -73,6 +80,13 @@ const MODULE_MAP: Record<string, { component: React.ComponentType; label: string
   "pipeline-visualizer": { component: PipelineVisualizer, label: "Pipeline" },
   vulnerabilities: { component: Vulnerabilities, label: "Vulnerabilities" },
   "agent-health": { component: AgentHealth, label: "Agent Health" },
+  "sigma-rules": { component: SigmaRules, label: "Sigma Rules" },
+  "threat-feeds": { component: ThreatFeeds, label: "Threat Feeds" },
+  "network-analysis": { component: NetworkAnalysis, label: "Network Analysis" },
+  playbooks: { component: Playbooks, label: "SOAR Playbooks" },
+  forensics: { component: Forensics, label: "Forensics" },
+  compliance: { component: Compliance, label: "NIST Compliance" },
+  "insider-threat": { component: InsiderThreat, label: "Insider Threat" },
   about: { component: About, label: "About" },
 };
 
