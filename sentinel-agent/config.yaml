@@ -18,12 +18,10 @@ collectors:
   # Windows Event Log collector
   windows:
     enabled: true
-    # Event channels to monitor
     channels:
       - Security
       - System
       - Application
-    # Event IDs to collect (Security channel)
     event_ids:
       - 4625    # Failed logon
       - 4624    # Successful logon
@@ -37,17 +35,30 @@ collectors:
       - 4104    # PowerShell script block logging
       - 4697    # Service installed
       - 1102    # Audit log cleared
-    # How often to poll for new events (seconds)
     poll_interval_seconds: 30
 
   # Linux log collector
   linux:
     enabled: true
-    # Log files to monitor
     files:
       - /var/log/auth.log
       - /var/log/syslog
       - /var/log/kern.log
       - /var/log/secure
-    # How often to poll for new entries (seconds)
+      - /var/log/audit/audit.log
+    process_commands: true
     poll_interval_seconds: 30
+
+  # Suricata IDS/IPS log collector
+  suricata:
+    enabled: false
+    eve_json_path: /var/log/suricata/eve.json
+    poll_interval_seconds: 15
+    # Alert types to collect from eve.json
+    alert_types:
+      - alert
+      - anomaly
+      - dns
+      - http
+      - tls
+      - flow

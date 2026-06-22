@@ -28,9 +28,10 @@ class GeoIPService:
         if not ip or ip in ("127.0.0.1", "localhost", "::1", ""):
             return self._empty_result(ip)
 
-        # Check cache
-        cached = self.cache.get(ip)
-        if cached and self._is_cache_valid(cached):
+        # Check cache (Redis/memory)
+        from services.cache_service import cache_get, cache_set
+        cached = cache_get(f"geoip:{ip}")
+        if cached:
             return cached
 
         # Query API
@@ -64,6 +65,7 @@ class GeoIPService:
                             "cached_at": datetime.now(timezone.utc).isoformat(),
                         }
                         self.cache[ip] = result
+                        cache_set(f"geoip:{ip}", result, ttl=86400)
                         return result
 
         except Exception:

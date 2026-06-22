@@ -95,6 +95,15 @@ app = FastAPI(
     version="2.0.0"
 )
 
+# Background scheduler
+from services.scheduler_service import scheduler, setup_scheduler
+
+@app.on_event("startup")
+async def startup_scheduler():
+    setup_scheduler()
+    asyncio.create_task(scheduler.start())
+    log_structured("info", "system", "Background scheduler started")
+
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
@@ -1280,6 +1289,30 @@ async def get_audit_log(payload: dict = Depends(require_auth)):
 # =========================
 # WebSocket Event Stream (real events only)
 # =========================
+# Channel-based WebSocket: client sends {"subscribe": "dashboard|alerts|incidents|analytics"}
+# Server pushes events to subscribed clients
+_ws_subscribers: dict[str, set[WebSocket]] = {
+    "dashboard": set(),
+    "alerts": set(),
+    "incidents": set(),
+    "analytics": set(),
+    "all": set(),
+}
+
+async def broadcast_ws(channel: str, event: dict):
+    """Push event to all subscribers of a channel."""
+    targets = _ws_subscribers.get(channel, set()) | _ws_subscribers.get("all", set())
+    dead = []
+    for ws in targets:
+        try:
+            await ws.send_json(event)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        for ch in _ws_subscribers.values():
+            ch.discard(ws)
+
+
 @app.websocket("/ws/events")
 async def websocket_events(websocket: WebSocket):
     await websocket.accept()
@@ -1291,11 +1324,36 @@ async def websocket_events(websocket: WebSocket):
     if not payload:
         await websocket.close(code=4001, reason="Invalid token")
         return
+
+    # Default: subscribe to all channels
+    subscribed_channels = {"all"}
+    for ch in subscribed_channels:
+        _ws_subscribers[ch].add(websocket)
+
     try:
         last_pred_count = 0
         last_broadcast_count = 0
         while True:
-            # Stream prediction events (from simulation/predictions)
+            # Handle client messages (subscribe/unsubscribe)
+            try:
+                data = await asyncio.wait_for(websocket.receive_json(), timeout=1.0)
+                if isinstance(data, dict):
+                    action = data.get("action", "")
+                    channel = data.get("channel", "")
+                    if action == "subscribe" and channel in _ws_subscribers:
+                        _ws_subscribers[channel].add(websocket)
+                        subscribed_channels.add(channel)
+                        await websocket.send_json({"type": "subscribed", "channel": channel})
+                    elif action == "unsubscribe" and channel in _ws_subscribers:
+                        _ws_subscribers[channel].discard(websocket)
+                        subscribed_channels.discard(channel)
+                        await websocket.send_json({"type": "unsubscribed", "channel": channel})
+            except asyncio.TimeoutError:
+                pass
+            except Exception:
+                break
+
+            # Stream prediction events
             pred_list = list(prediction_history)
             if len(pred_list) > last_pred_count:
                 for pred in pred_list[:len(pred_list) - last_pred_count]:
@@ -1309,19 +1367,26 @@ async def websocket_events(websocket: WebSocket):
                         "severity": pred.get("severity", "LOW"),
                         "status": "DETECTED",
                     }
-                    await websocket.send_json(event)
+                    await broadcast_ws("dashboard", event)
+                    await broadcast_ws("analytics", event)
                 last_pred_count = len(pred_list)
 
             # Stream real-time ingestion events (detections + incidents)
             bcast_list = list(broadcast_queue)
             if len(bcast_list) > last_broadcast_count:
-                for evt in bcast_list[:len(bcast_list) - last_broadcast_count]:
-                    await websocket.send_json(evt)
+                for evt in bcast_list[last_broadcast_count:]:
+                    await broadcast_ws("all", evt)
+                    if evt.get("type") == "detection":
+                        await broadcast_ws("alerts", evt)
+                    elif evt.get("type") == "incident":
+                        await broadcast_ws("incidents", evt)
                 last_broadcast_count = len(bcast_list)
 
-            await asyncio.sleep(1.0)
     except WebSocketDisconnect:
         pass
+    finally:
+        for ch in subscribed_channels:
+            _ws_subscribers.get(ch, set()).discard(websocket)
 
 
 # =========================

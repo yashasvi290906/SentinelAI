@@ -437,6 +437,87 @@ class LinuxCollector:
         return events
 
 
+# ─── Suricata IDS/IPS Log Collector ─────────────────────────────────────────
+
+class SuricataCollector:
+    """Collects Suricata eve.json alerts and flow logs."""
+
+    def __init__(self, config: Dict, state: AgentState):
+        self.config = config
+        self.state = state
+        self.eve_path = config.get("eve_json_path", "/var/log/suricata/eve.json")
+        self.alert_types = set(config.get("alert_types", ["alert", "anomaly", "dns", "http", "tls", "flow"]))
+
+    def collect(self) -> List[Dict]:
+        events = []
+        offset = self.state.get_offset("suricata_eve")
+        try:
+            with open(self.eve_path, "r", errors="replace") as f:
+                f.seek(offset)
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        event_type = entry.get("event_type", "")
+                        if event_type not in self.alert_types:
+                            continue
+
+                        ts = entry.get("timestamp", datetime.now(timezone.utc).isoformat())
+                        src_ip = entry.get("src_ip", "")
+                        dest_ip = entry.get("dest_ip", "")
+                        src_port = entry.get("src_port", 0)
+                        dest_port = entry.get("dest_port", 0)
+                        proto = entry.get("proto", "")
+
+                        severity = "INFO"
+                        description = ""
+                        if event_type == "alert":
+                            alert = entry.get("alert", {})
+                            description = alert.get("signature", "")
+                            sev = alert.get("severity", 3)
+                            severity = {1: "CRITICAL", 2: "HIGH", 3: "MEDIUM"}.get(sev, "LOW")
+                        elif event_type == "dns":
+                            dns = entry.get("dns", {})
+                            rrname = dns.get("rrname", "")
+                            rrtype = dns.get("rrtype", "")
+                            description = f"DNS {rrtype}: {rrname}"
+                        elif event_type == "http":
+                            http = entry.get("http", {})
+                            description = f"HTTP {http.get('method', '')} {http.get('hostname', '')}{http.get('url', '')}"
+                        elif event_type == "tls":
+                            tls = entry.get("tls", {})
+                            description = f"TLS {tls.get('sni', '')} JA3={tls.get('ja3', {}).get('hash', '')[:16]}"
+                        elif event_type == "flow":
+                            flow = entry.get("flow", {})
+                            description = f"Flow {flow.get('pkts_toserver', 0)}→{flow.get('pkts_toclient', 0)} bytes"
+
+                        events.append({
+                            "event_type": f"suricata_{event_type}",
+                            "timestamp": ts,
+                            "source_ip": src_ip,
+                            "dest_ip": dest_ip,
+                            "source_port": src_port,
+                            "dest_port": dest_port,
+                            "protocol": proto,
+                            "description": description,
+                            "severity": severity,
+                            "raw": line[:500],
+                        })
+                    except json.JSONDecodeError:
+                        continue
+                    except Exception:
+                        continue
+                new_offset = f.tell()
+            self.state.set_offset("suricata_eve", new_offset)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            logger.warning(f"Suricata collection error: {e}")
+        return events
+
+
 # ─── Event Shipper ────────────────────────────────────────────────────────────
 
 class EventShipper:
@@ -549,6 +630,11 @@ class SentinelAgent:
         elif system == "Linux" and collector_config.get("linux", {}).get("enabled", True):
             self.collectors.append(("linux", LinuxCollector(collector_config["linux"], self.state)))
             logger.info("Linux collector initialized")
+
+        # Suricata collector (cross-platform)
+        if collector_config.get("suricata", {}).get("enabled", False):
+            self.collectors.append(("suricata", SuricataCollector(collector_config["suricata"], self.state)))
+            logger.info("Suricata collector initialized")
 
         if not self.collectors:
             logger.warning(f"No collectors available for platform: {system}")
