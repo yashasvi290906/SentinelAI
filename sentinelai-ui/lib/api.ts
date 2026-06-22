@@ -498,3 +498,24 @@ export async function getAgentsAPI() {
   const res = await api.get('/api/agents');
   return res.data;
 }
+
+// ── Vulnerabilities ──
+export async function searchVulnerabilitiesAPI(keyword: string = "", cvssMin: number = 0, limit: number = 20) {
+  const params = new URLSearchParams();
+  if (keyword) params.set('keyword', keyword);
+  if (cvssMin > 0) params.set('cvss_min', String(cvssMin));
+  params.set('limit', String(limit));
+  const res = await api.get(`/api/vulnerabilities/search?${params.toString()}`);
+  return res.data;
+}
+
+export async function getCveAPI(cveId: string) {
+  const res = await api.get(`/api/vulnerabilities/${cveId}`);
+  return res.data;
+}
+
+// ── Agent Health ──
+export async function getAgentHealthAPI() {
+  const res = await api.get('/api/agents/health');
+  return res.data;
+}

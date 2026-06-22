@@ -2041,6 +2041,7 @@ async def ingest_batch(batch: IngestBatch):
 async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
     """Process a single ingested event: store, detect threats, broadcast, auto-correlate."""
     global _detection_counter
+    _record_aps_event()  # Record for APS calculation
 
     event_dict = event.model_dump()
     event_dict['source_type'] = source
@@ -2660,6 +2661,62 @@ def _parse_iso(ts: str) -> float:
 def _record_aps_event():
     """Record an event timestamp for APS calculation."""
     _aps_buffer.append(time.time())
+
+
+# =========================
+# Vulnerability Dashboard
+# =========================
+@app.get("/api/vulnerabilities/search")
+async def search_vulnerabilities(keyword: str = "", cvss_min: float = 0, limit: int = 20):
+    from services.vulnerability_service import vuln_service
+    vulns = await vuln_service.search_cves(keyword=keyword, cvss_min=cvss_min, limit=limit)
+    return {"vulnerabilities": vulns, "total": len(vulns)}
+
+@app.get("/api/vulnerabilities/{cve_id}")
+async def get_vulnerability(cve_id: str):
+    from services.vulnerability_service import vuln_service
+    vuln = await vuln_service.get_cve(cve_id)
+    if not vuln:
+        return JSONResponse(status_code=404, content={"error": "CVE not found"})
+    return vuln
+
+@app.get("/api/vulnerabilities/stats/overview")
+async def get_vulnerability_stats():
+    from services.vulnerability_service import vuln_service
+    return await vuln_service.get_stats()
+
+
+# =========================
+# Agent Health Monitoring
+# =========================
+@app.get("/api/agents/health")
+async def get_agent_health():
+    """Get agent health status with online/offline detection."""
+    agents = db.get_agents()
+    now = datetime.now(timezone.utc)
+    healthy = []
+    for agent in agents:
+        last_heartbeat = agent.get("last_heartbeat", "")
+        is_online = False
+        if last_heartbeat:
+            try:
+                hb_time = datetime.fromisoformat(last_heartbeat.replace("Z", "+00:00"))
+                is_online = (now - hb_time).total_seconds() < 120
+            except Exception:
+                pass
+        healthy.append({
+            **agent,
+            "is_online": is_online,
+            "status_display": "Online" if is_online else "Offline",
+            "health": "healthy" if is_online else "critical",
+        })
+    online_count = sum(1 for a in healthy if a["is_online"])
+    return {
+        "agents": healthy,
+        "total": len(healthy),
+        "online": online_count,
+        "offline": len(healthy) - online_count,
+    }
 
 
 # =========================

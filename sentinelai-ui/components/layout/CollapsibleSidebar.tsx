@@ -46,6 +46,8 @@ const secondaryNav = [
   { id: 'threat-hunt', label: 'Threat Hunt', icon: Search },
   { id: 'security-metrics', label: 'Security Metrics', icon: BarChart3 },
   { id: 'pipeline-visualizer', label: 'Pipeline', icon: Activity },
+  { id: 'vulnerabilities', label: 'Vulnerabilities', icon: Shield },
+  { id: 'agent-health', label: 'Agent Health', icon: Server },
   { id: 'explainability', label: 'Explainability', icon: ScanSearch },
   { id: 'network-graph', label: 'Network Graph', icon: Network },
   { id: 'attack-journey', label: 'Attack Journey', icon: Route },

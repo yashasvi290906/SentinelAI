@@ -40,6 +40,8 @@ const Incidents = dynamic(() => import("@/modules/incidents"), { loading: () => 
 const ThreatHunt = dynamic(() => import("@/modules/threat-hunt"), { loading: () => <LoadingSkeleton /> });
 const SecurityMetrics = dynamic(() => import("@/modules/security-metrics"), { loading: () => <LoadingSkeleton /> });
 const PipelineVisualizer = dynamic(() => import("@/modules/pipeline-visualizer"), { loading: () => <LoadingSkeleton /> });
+const Vulnerabilities = dynamic(() => import("@/modules/vulnerabilities"), { loading: () => <LoadingSkeleton /> });
+const AgentHealth = dynamic(() => import("@/modules/agent-health"), { loading: () => <LoadingSkeleton /> });
 
 const MODULE_MAP: Record<string, { component: React.ComponentType; label: string }> = {
   dashboard: { component: Dashboard, label: "Dashboard" },
@@ -69,6 +71,8 @@ const MODULE_MAP: Record<string, { component: React.ComponentType; label: string
   "threat-hunt": { component: ThreatHunt, label: "Threat Hunt" },
   "security-metrics": { component: SecurityMetrics, label: "Security Metrics" },
   "pipeline-visualizer": { component: PipelineVisualizer, label: "Pipeline" },
+  vulnerabilities: { component: Vulnerabilities, label: "Vulnerabilities" },
+  "agent-health": { component: AgentHealth, label: "Agent Health" },
   about: { component: About, label: "About" },
 };
 
