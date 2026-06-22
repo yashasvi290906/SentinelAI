@@ -59,7 +59,11 @@ When explaining threats, include the MITRE technique and tactic."""
 
     @property
     def api_key(self) -> str:
-        return os.environ.get("GEMINI_API_KEY", "")
+        key = os.environ.get("GEMINI_API_KEY", "")
+        if key and not key.startswith("AIzaSy"):
+            # Not a valid Google AI Studio key format
+            return ""
+        return key
     
     async def chat(
         self,
@@ -210,62 +214,106 @@ EVENT SUMMARY:
         return "\n".join(parts) if parts else "No analysis data available yet."
     
     async def _query_gemini(self, question: str, context: str, history: List[Dict] = None) -> Dict[str, Any]:
-        """Query Gemini API with context."""
-        try:
-            messages = [{"role": "user", "parts": [{"text": f"{self.SYSTEM_PROMPT}\n\n---CONTEXT---\n{context}\n---END CONTEXT---\n\nQuestion: {question}"}]}]
-            
-            if history:
-                # Add conversation history (limited to last 10 exchanges)
-                for msg in history[-10:]:
-                    role = msg.get('role', 'user')
-                    content = msg.get('content', '')
-                    messages.append({"role": role, "parts": [{"text": content}]})
-                messages.append({"role": "user", "parts": [{"text": question}]})
-            
-            payload = {
-                "contents": messages,
-                "generationConfig": {
-                    "temperature": 0.3,
-                    "topK": 40,
-                    "topP": 0.95,
-                    "maxOutputTokens": 2048,
-                },
-                "safetySettings": [
-                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-                ]
-            }
-            
-            url = f"{self.api_base}/{self.model}:generateContent?key={self.api_key}"
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(url, json=payload)
-                
-                if resp.status_code == 200:
-                    data = resp.json()
-                    text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-                    
+        """Query Gemini API with context. Retries on 429 with backoff."""
+        import asyncio
+
+        messages = [{"role": "user", "parts": [{"text": f"{self.SYSTEM_PROMPT}\n\n---CONTEXT---\n{context}\n---END CONTEXT---\n\nQuestion: {question}"}]}]
+
+        if history:
+            for msg in history[-10:]:
+                role = msg.get('role', 'user')
+                content = msg.get('content', '')
+                messages.append({"role": role, "parts": [{"text": content}]})
+            messages.append({"role": "user", "parts": [{"text": question}]})
+
+        payload = {
+            "contents": messages,
+            "generationConfig": {
+                "temperature": 0.3,
+                "topK": 40,
+                "topP": 0.95,
+                "maxOutputTokens": 2048,
+            },
+            "safetySettings": [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            ]
+        }
+
+        url = f"{self.api_base}/{self.model}:generateContent?key={self.api_key}"
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    resp = await client.post(url, json=payload)
+
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                        else:
+                            text = "Gemini returned an empty response. Try rephrasing your question."
+                        return {
+                            "response": text,
+                            "source": "gemini",
+                            "model": self.model,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+
+                    if resp.status_code == 429:
+                        error_detail = ""
+                        try:
+                            err = resp.json()
+                            error_detail = err.get("error", {}).get("message", "")
+                        except Exception:
+                            error_detail = resp.text[:200]
+                        wait = (2 ** attempt) * 2
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(wait)
+                            continue
+                        return {
+                            "response": f"Gemini rate limit exceeded (429). {error_detail}\n\nTry again in {wait}s or use shorter context.",
+                            "source": "gemini_rate_limit",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+
+                    error_detail = ""
+                    try:
+                        err = resp.json()
+                        error_detail = err.get("error", {}).get("message", resp.text[:200])
+                    except Exception:
+                        error_detail = resp.text[:200]
                     return {
-                        "response": text,
-                        "source": "gemini",
-                        "model": self.model,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }
-                else:
-                    return {
-                        "response": f"Gemini API error: {resp.status_code}",
+                        "response": f"Gemini API error {resp.status_code}: {error_detail}",
                         "source": "gemini_error",
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
-        
-        except Exception as e:
-            return {
-                "response": f"Gemini API unavailable: {str(e)}",
-                "source": "gemini_error",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
+
+            except httpx.TimeoutException:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return {
+                    "response": "Gemini API timed out after retries. Please try again.",
+                    "source": "gemini_timeout",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            except Exception as e:
+                return {
+                    "response": f"Gemini API unavailable: {str(e)}",
+                    "source": "gemini_error",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+
+        return {
+            "response": "Gemini API failed after all retries.",
+            "source": "gemini_error",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
     
     def _intelligent_fallback(self, question: str, context: str, detections: List[Dict], incident_context: Dict = None) -> Dict[str, Any]:
         """Intelligent local fallback when Gemini is not available."""
