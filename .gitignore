@@ -10,6 +10,8 @@ venv/
 dist/
 build/
 out/
+app/static/*
+!app/static/.gitkeep
 
 # Environment files
 .env

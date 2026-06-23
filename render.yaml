@@ -1,12 +1,20 @@
 services:
   - type: web
-    name: sentinelai-frontend
-    runtime: node
+    name: sentinelai
+    runtime: python
     plan: free
-    buildCommand: npm install && npm run build
-    startCommand: npm run start
+    rootDir: app
+    buildCommand: cd ../sentinelai-ui && npm ci && npm run build && cd .. && mkdir -p app/static && rm -rf app/static/* && cp -r sentinelai-ui/out/* app/static/ && pip install -r app/requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
-      - key: NEXT_PUBLIC_API_URL
-        value: https://sentinelai-backend.onrender.com
-      - key: NODE_VERSION
-        value: 20.0.0
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: "http://localhost:3000"
+      - key: PYTHONPATH
+        value: "."

@@ -136,7 +136,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
@@ -144,11 +144,13 @@ app.add_middleware(
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
+        frontend_url = os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")[0].strip()
+        ws_url = frontend_url.replace("https://", "wss://").replace("http://", "ws://")
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000"
+        response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' {frontend_url} {ws_url}"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         return response
@@ -4637,3 +4639,28 @@ async def system_diagnostics():
         diag["scheduler"] = "error"
 
     return diag
+
+
+# =========================
+# Static Frontend Serving (Production)
+# =========================
+import os as _os
+from pathlib import Path as _Path
+
+_static_dir = _Path(__file__).parent / "static"
+if _static_dir.is_dir():
+    from starlette.staticfiles import StaticFiles
+    from starlette.responses import FileResponse
+
+    app.mount("/assets", StaticFiles(directory=str(_static_dir / "assets")), name="static-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve Next.js static export. All non-API routes return index.html for client-side routing."""
+        file_path = _static_dir / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        index_path = _static_dir / "index.html"
+        if index_path.is_file():
+            return FileResponse(str(index_path))
+        return JSONResponse(status_code=404, content={"error": "Not found"})

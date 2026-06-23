@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const isProd = process.env.NODE_ENV === "production";
 
 const securityHeaders = [
   { key: 'X-Frame-Options', value: 'DENY' },
@@ -11,7 +12,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  output: 'standalone',
+  output: 'export',
+  images: { unoptimized: true },
   async headers() {
     return [
       {
@@ -21,6 +23,7 @@ const nextConfig: NextConfig = {
     ];
   },
   async rewrites() {
+    if (isProd) return [];
     return [
       {
         source: "/api/:path*",
