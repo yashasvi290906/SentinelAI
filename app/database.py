@@ -89,7 +89,11 @@ class DatabaseManager:
     def _init_postgresql(self):
         self.conn = psycopg2.connect(DB_URL, cursor_factory=psycopg2.extras.RealDictCursor)
         self.conn.autocommit = False
-        self._create_tables_postgresql()
+        try:
+            self._create_tables_postgresql()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     @contextmanager
     def _cursor(self):
@@ -478,50 +482,74 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS threat_feeds (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
-                    feed_type TEXT NOT NULL,
+                    feed_type TEXT NOT NULL DEFAULT 'taxii',
                     url TEXT,
                     taxii_version TEXT DEFAULT '2.1',
                     auth_type TEXT DEFAULT 'none',
                     auth_config TEXT DEFAULT '{}',
+                    collection_id TEXT DEFAULT '',
+                    description TEXT DEFAULT '',
                     poll_interval_seconds INTEGER DEFAULT 3600,
                     last_polled_at TEXT,
                     enabled INTEGER DEFAULT 1,
+                    tlp TEXT DEFAULT 'white',
+                    total_objects INTEGER DEFAULT 0,
+                    total_indicators INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'idle',
+                    error_message TEXT DEFAULT '',
                     organization_id TEXT,
-                    created_at TEXT
+                    created_at TEXT,
+                    updated_at TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS stix_objects (
                     id TEXT PRIMARY KEY,
+                    feed_id TEXT NOT NULL,
+                    stix_id TEXT NOT NULL,
+                    stix_type TEXT NOT NULL,
                     type TEXT NOT NULL,
                     spec_version TEXT DEFAULT '2.1',
+                    name TEXT DEFAULT '',
+                    description TEXT DEFAULT '',
+                    labels TEXT DEFAULT '[]',
+                    confidence INTEGER DEFAULT 0,
+                    created TEXT DEFAULT '',
+                    modified TEXT DEFAULT '',
+                    revoked INTEGER DEFAULT 0,
+                    raw_json TEXT NOT NULL,
                     created_at_stix TEXT,
                     modified_at_stix TEXT,
-                    name TEXT,
-                    description TEXT,
                     pattern TEXT,
                     valid_from TEXT,
                     valid_until TEXT,
-                    labels TEXT DEFAULT '[]',
-                    confidence INTEGER,
                     object_marking_ref TEXT,
-                    raw_json TEXT NOT NULL,
-                    feed_id TEXT,
                     imported_at TEXT,
                     FOREIGN KEY (feed_id) REFERENCES threat_feeds(id)
                 );
 
                 CREATE TABLE IF NOT EXISTS stix_indicators (
                     id TEXT PRIMARY KEY,
-                    stix_object_id TEXT NOT NULL,
+                    feed_id TEXT NOT NULL,
+                    stix_object_id TEXT,
+                    stix_id TEXT DEFAULT '',
                     indicator_type TEXT NOT NULL,
                     indicator_value TEXT NOT NULL,
-                    confidence INTEGER,
+                    value TEXT NOT NULL,
+                    pattern TEXT DEFAULT '',
+                    confidence INTEGER DEFAULT 0,
                     severity TEXT,
+                    labels TEXT DEFAULT '[]',
                     threat_types TEXT DEFAULT '[]',
                     kill_chain_phases TEXT DEFAULT '[]',
                     valid_from TEXT,
                     valid_until TEXT,
-                    feed_id TEXT,
+                    description TEXT DEFAULT '',
+                    name TEXT DEFAULT '',
+                    first_seen TEXT,
+                    last_seen TEXT,
+                    hit_count INTEGER DEFAULT 0,
+                    created_at TEXT,
+                    FOREIGN KEY (feed_id) REFERENCES threat_feeds(id),
                     FOREIGN KEY (stix_object_id) REFERENCES stix_objects(id)
                 );
 
@@ -646,14 +674,17 @@ class DatabaseManager:
                     incident_id TEXT,
                     alert_id TEXT,
                     evidence_type TEXT NOT NULL,
-                    description TEXT,
+                    source_type TEXT DEFAULT '',
+                    source_id TEXT DEFAULT '',
+                    description TEXT DEFAULT '',
                     file_name TEXT,
-                    file_path TEXT,
-                    file_size INTEGER,
+                    file_path TEXT DEFAULT '',
+                    file_size INTEGER DEFAULT 0,
                     sha256_hash TEXT NOT NULL,
                     md5_hash TEXT,
                     collected_by TEXT,
                     collected_at TEXT NOT NULL,
+                    status TEXT DEFAULT 'collected',
                     chain_of_custody TEXT DEFAULT '[]',
                     metadata TEXT DEFAULT '{}',
                     created_at TEXT
@@ -662,10 +693,12 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS evidence_chain (
                     id TEXT PRIMARY KEY,
                     evidence_id TEXT NOT NULL,
+                    sequence_num INTEGER DEFAULT 0,
                     action TEXT NOT NULL,
                     actor TEXT NOT NULL,
                     actor_name TEXT,
-                    details TEXT,
+                    details TEXT DEFAULT '',
+                    prev_hash TEXT DEFAULT '',
                     timestamp TEXT NOT NULL,
                     previous_hash TEXT,
                     entry_hash TEXT NOT NULL,
@@ -677,10 +710,11 @@ class DatabaseManager:
                     incident_id TEXT,
                     event_time TEXT NOT NULL,
                     event_type TEXT NOT NULL,
-                    source TEXT,
-                    description TEXT,
-                    evidence_id TEXT,
+                    source TEXT DEFAULT '',
+                    description TEXT DEFAULT '',
+                    evidence_id TEXT DEFAULT '',
                     confidence REAL DEFAULT 1.0,
+                    metadata TEXT DEFAULT '{}',
                     created_at TEXT
                 );
 
@@ -703,16 +737,14 @@ class DatabaseManager:
 
                 CREATE TABLE IF NOT EXISTS compliance_assessments (
                     id TEXT PRIMARY KEY,
-                    assessment_date TEXT NOT NULL,
-                    framework TEXT DEFAULT 'NIST-800-53',
+                    assessment_id TEXT NOT NULL,
+                    score REAL,
                     total_controls INTEGER,
-                    implemented INTEGER,
-                    partial INTEGER,
-                    not_implemented INTEGER,
-                    not_assessed INTEGER,
-                    compliance_score REAL,
-                    assessed_by TEXT,
-                    notes TEXT,
+                    compliant_count INTEGER,
+                    non_compliant_count INTEGER,
+                    controls_status TEXT DEFAULT '[]',
+                    gaps TEXT DEFAULT '[]',
+                    system_state TEXT DEFAULT '{}',
                     created_at TEXT
                 );
 
@@ -759,6 +791,51 @@ class DatabaseManager:
                     updated_at TEXT
                 );
             """)
+
+            for alter_sql in [
+                "ALTER TABLE threat_feeds ADD COLUMN collection_id TEXT DEFAULT ''",
+                "ALTER TABLE threat_feeds ADD COLUMN description TEXT DEFAULT ''",
+                "ALTER TABLE threat_feeds ADD COLUMN tlp TEXT DEFAULT 'white'",
+                "ALTER TABLE threat_feeds ADD COLUMN total_objects INTEGER DEFAULT 0",
+                "ALTER TABLE threat_feeds ADD COLUMN total_indicators INTEGER DEFAULT 0",
+                "ALTER TABLE threat_feeds ADD COLUMN status TEXT DEFAULT 'idle'",
+                "ALTER TABLE threat_feeds ADD COLUMN error_message TEXT DEFAULT ''",
+                "ALTER TABLE threat_feeds ADD COLUMN updated_at TEXT",
+                "ALTER TABLE stix_objects ADD COLUMN feed_id TEXT",
+                "ALTER TABLE stix_objects ADD COLUMN stix_id TEXT DEFAULT ''",
+                "ALTER TABLE stix_objects ADD COLUMN stix_type TEXT DEFAULT ''",
+                "ALTER TABLE stix_objects ADD COLUMN created TEXT DEFAULT ''",
+                "ALTER TABLE stix_objects ADD COLUMN modified TEXT DEFAULT ''",
+                "ALTER TABLE stix_objects ADD COLUMN revoked INTEGER DEFAULT 0",
+                "ALTER TABLE stix_indicators ADD COLUMN feed_id TEXT",
+                "ALTER TABLE stix_indicators ADD COLUMN stix_id TEXT DEFAULT ''",
+                "ALTER TABLE stix_indicators ADD COLUMN value TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE stix_indicators ADD COLUMN pattern TEXT DEFAULT ''",
+                "ALTER TABLE stix_indicators ADD COLUMN labels TEXT DEFAULT '[]'",
+                "ALTER TABLE stix_indicators ADD COLUMN description TEXT DEFAULT ''",
+                "ALTER TABLE stix_indicators ADD COLUMN name TEXT DEFAULT ''",
+                "ALTER TABLE stix_indicators ADD COLUMN first_seen TEXT",
+                "ALTER TABLE stix_indicators ADD COLUMN last_seen TEXT",
+                "ALTER TABLE stix_indicators ADD COLUMN hit_count INTEGER DEFAULT 0",
+                "ALTER TABLE stix_indicators ADD COLUMN created_at TEXT",
+                "ALTER TABLE evidence ADD COLUMN source_type TEXT DEFAULT ''",
+                "ALTER TABLE evidence ADD COLUMN source_id TEXT DEFAULT ''",
+                "ALTER TABLE evidence ADD COLUMN status TEXT DEFAULT 'collected'",
+                "ALTER TABLE evidence_chain ADD COLUMN sequence_num INTEGER DEFAULT 0",
+                "ALTER TABLE evidence_chain ADD COLUMN prev_hash TEXT DEFAULT ''",
+                "ALTER TABLE forensic_timeline ADD COLUMN metadata TEXT DEFAULT '{}'",
+                "ALTER TABLE compliance_assessments ADD COLUMN assessment_id TEXT DEFAULT ''",
+                "ALTER TABLE compliance_assessments ADD COLUMN score REAL",
+                "ALTER TABLE compliance_assessments ADD COLUMN compliant_count INTEGER",
+                "ALTER TABLE compliance_assessments ADD COLUMN non_compliant_count INTEGER",
+                "ALTER TABLE compliance_assessments ADD COLUMN controls_status TEXT DEFAULT '[]'",
+                "ALTER TABLE compliance_assessments ADD COLUMN gaps TEXT DEFAULT '[]'",
+                "ALTER TABLE compliance_assessments ADD COLUMN system_state TEXT DEFAULT '{}'",
+            ]:
+                try:
+                    cur.execute(alter_sql)
+                except Exception:
+                    pass
 
     def _create_tables_postgresql(self):
         with self._cursor() as cur:
@@ -1092,49 +1169,75 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS threat_feeds (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
-                    feed_type TEXT NOT NULL,
+                    feed_type TEXT NOT NULL DEFAULT 'taxii',
                     url TEXT,
                     taxii_version TEXT DEFAULT '2.1',
                     auth_type TEXT DEFAULT 'none',
                     auth_config TEXT DEFAULT '{}',
+                    collection_id TEXT DEFAULT '',
+                    description TEXT DEFAULT '',
                     poll_interval_seconds INTEGER DEFAULT 3600,
                     last_polled_at TIMESTAMPTZ,
                     enabled INTEGER DEFAULT 1,
+                    tlp TEXT DEFAULT 'white',
+                    total_objects INTEGER DEFAULT 0,
+                    total_indicators INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'idle',
+                    error_message TEXT DEFAULT '',
                     organization_id TEXT,
-                    created_at TIMESTAMPTZ DEFAULT NOW()
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ
                 );
 
                 CREATE TABLE IF NOT EXISTS stix_objects (
                     id TEXT PRIMARY KEY,
+                    feed_id TEXT NOT NULL,
+                    stix_id TEXT NOT NULL,
+                    stix_type TEXT NOT NULL,
                     type TEXT NOT NULL,
                     spec_version TEXT DEFAULT '2.1',
+                    name TEXT DEFAULT '',
+                    description TEXT DEFAULT '',
+                    labels TEXT DEFAULT '[]',
+                    confidence INTEGER DEFAULT 0,
+                    created TEXT DEFAULT '',
+                    modified TEXT DEFAULT '',
+                    revoked INTEGER DEFAULT 0,
+                    raw_json TEXT NOT NULL,
                     created_at_stix TIMESTAMPTZ,
                     modified_at_stix TIMESTAMPTZ,
-                    name TEXT,
-                    description TEXT,
                     pattern TEXT,
                     valid_from TIMESTAMPTZ,
                     valid_until TIMESTAMPTZ,
-                    labels TEXT DEFAULT '[]',
-                    confidence INTEGER,
                     object_marking_ref TEXT,
-                    raw_json TEXT NOT NULL,
-                    feed_id TEXT REFERENCES threat_feeds(id),
-                    imported_at TIMESTAMPTZ DEFAULT NOW()
+                    imported_at TIMESTAMPTZ DEFAULT NOW(),
+                    FOREIGN KEY (feed_id) REFERENCES threat_feeds(id)
                 );
 
                 CREATE TABLE IF NOT EXISTS stix_indicators (
                     id TEXT PRIMARY KEY,
-                    stix_object_id TEXT NOT NULL REFERENCES stix_objects(id),
+                    feed_id TEXT NOT NULL,
+                    stix_object_id TEXT,
+                    stix_id TEXT DEFAULT '',
                     indicator_type TEXT NOT NULL,
                     indicator_value TEXT NOT NULL,
-                    confidence INTEGER,
+                    value TEXT NOT NULL,
+                    pattern TEXT DEFAULT '',
+                    confidence INTEGER DEFAULT 0,
                     severity TEXT,
+                    labels TEXT DEFAULT '[]',
                     threat_types TEXT DEFAULT '[]',
                     kill_chain_phases TEXT DEFAULT '[]',
                     valid_from TIMESTAMPTZ,
                     valid_until TIMESTAMPTZ,
-                    feed_id TEXT
+                    description TEXT DEFAULT '',
+                    name TEXT DEFAULT '',
+                    first_seen TIMESTAMPTZ,
+                    last_seen TIMESTAMPTZ,
+                    hit_count INTEGER DEFAULT 0,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    FOREIGN KEY (feed_id) REFERENCES threat_feeds(id),
+                    FOREIGN KEY (stix_object_id) REFERENCES stix_objects(id)
                 );
 
                 CREATE TABLE IF NOT EXISTS network_flows (
@@ -1256,14 +1359,17 @@ class DatabaseManager:
                     incident_id TEXT,
                     alert_id TEXT,
                     evidence_type TEXT NOT NULL,
-                    description TEXT,
+                    source_type TEXT DEFAULT '',
+                    source_id TEXT DEFAULT '',
+                    description TEXT DEFAULT '',
                     file_name TEXT,
-                    file_path TEXT,
-                    file_size INTEGER,
+                    file_path TEXT DEFAULT '',
+                    file_size INTEGER DEFAULT 0,
                     sha256_hash TEXT NOT NULL,
                     md5_hash TEXT,
                     collected_by TEXT,
                     collected_at TIMESTAMPTZ NOT NULL,
+                    status TEXT DEFAULT 'collected',
                     chain_of_custody TEXT DEFAULT '[]',
                     metadata TEXT DEFAULT '{}',
                     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -1272,10 +1378,12 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS evidence_chain (
                     id TEXT PRIMARY KEY,
                     evidence_id TEXT NOT NULL REFERENCES evidence(id),
+                    sequence_num INTEGER DEFAULT 0,
                     action TEXT NOT NULL,
                     actor TEXT NOT NULL,
                     actor_name TEXT,
-                    details TEXT,
+                    details TEXT DEFAULT '',
+                    prev_hash TEXT DEFAULT '',
                     timestamp TIMESTAMPTZ NOT NULL,
                     previous_hash TEXT,
                     entry_hash TEXT NOT NULL
@@ -1286,10 +1394,11 @@ class DatabaseManager:
                     incident_id TEXT,
                     event_time TIMESTAMPTZ NOT NULL,
                     event_type TEXT NOT NULL,
-                    source TEXT,
-                    description TEXT,
-                    evidence_id TEXT,
+                    source TEXT DEFAULT '',
+                    description TEXT DEFAULT '',
+                    evidence_id TEXT DEFAULT '',
                     confidence REAL DEFAULT 1.0,
+                    metadata TEXT DEFAULT '{}',
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 );
 
@@ -1312,16 +1421,14 @@ class DatabaseManager:
 
                 CREATE TABLE IF NOT EXISTS compliance_assessments (
                     id TEXT PRIMARY KEY,
-                    assessment_date TIMESTAMPTZ NOT NULL,
-                    framework TEXT DEFAULT 'NIST-800-53',
+                    assessment_id TEXT NOT NULL,
+                    score REAL,
                     total_controls INTEGER,
-                    implemented INTEGER,
-                    partial INTEGER,
-                    not_implemented INTEGER,
-                    not_assessed INTEGER,
-                    compliance_score REAL,
-                    assessed_by TEXT,
-                    notes TEXT,
+                    compliant_count INTEGER,
+                    non_compliant_count INTEGER,
+                    controls_status TEXT DEFAULT '[]',
+                    gaps TEXT DEFAULT '[]',
+                    system_state TEXT DEFAULT '{}',
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 );
 
@@ -1368,6 +1475,52 @@ class DatabaseManager:
                     updated_at TIMESTAMPTZ
                 );
             """)
+
+            for alter_sql in [
+                "ALTER TABLE threat_feeds ADD COLUMN IF NOT EXISTS collection_id TEXT DEFAULT ''",
+                "ALTER TABLE threat_feeds ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''",
+                "ALTER TABLE threat_feeds ADD COLUMN IF NOT EXISTS tlp TEXT DEFAULT 'white'",
+                "ALTER TABLE threat_feeds ADD COLUMN IF NOT EXISTS total_objects INTEGER DEFAULT 0",
+                "ALTER TABLE threat_feeds ADD COLUMN IF NOT EXISTS total_indicators INTEGER DEFAULT 0",
+                "ALTER TABLE threat_feeds ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'idle'",
+                "ALTER TABLE threat_feeds ADD COLUMN IF NOT EXISTS error_message TEXT DEFAULT ''",
+                "ALTER TABLE threat_feeds ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
+                "ALTER TABLE stix_objects ADD COLUMN IF NOT EXISTS feed_id TEXT",
+                "ALTER TABLE stix_objects ADD COLUMN IF NOT EXISTS stix_id TEXT DEFAULT ''",
+                "ALTER TABLE stix_objects ADD COLUMN IF NOT EXISTS stix_type TEXT DEFAULT ''",
+                "ALTER TABLE stix_objects ADD COLUMN IF NOT EXISTS created TEXT DEFAULT ''",
+                "ALTER TABLE stix_objects ADD COLUMN IF NOT EXISTS modified TEXT DEFAULT ''",
+                "ALTER TABLE stix_objects ADD COLUMN IF NOT EXISTS revoked INTEGER DEFAULT 0",
+                "ALTER TABLE stix_indicators ADD COLUMN IF NOT EXISTS feed_id TEXT",
+                "ALTER TABLE stix_indicators ADD COLUMN IF NOT EXISTS stix_id TEXT DEFAULT ''",
+                "ALTER TABLE stix_indicators ADD COLUMN IF NOT EXISTS indicator_value TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE stix_indicators ADD COLUMN IF NOT EXISTS value TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE stix_indicators ADD COLUMN IF NOT EXISTS pattern TEXT DEFAULT ''",
+                "ALTER TABLE stix_indicators ADD COLUMN IF NOT EXISTS labels TEXT DEFAULT '[]'",
+                "ALTER TABLE stix_indicators ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''",
+                "ALTER TABLE stix_indicators ADD COLUMN IF NOT EXISTS name TEXT DEFAULT ''",
+                "ALTER TABLE stix_indicators ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ",
+                "ALTER TABLE stix_indicators ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ",
+                "ALTER TABLE stix_indicators ADD COLUMN IF NOT EXISTS hit_count INTEGER DEFAULT 0",
+                "ALTER TABLE stix_indicators ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()",
+                "ALTER TABLE evidence ADD COLUMN IF NOT EXISTS source_type TEXT DEFAULT ''",
+                "ALTER TABLE evidence ADD COLUMN IF NOT EXISTS source_id TEXT DEFAULT ''",
+                "ALTER TABLE evidence ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'collected'",
+                "ALTER TABLE evidence_chain ADD COLUMN IF NOT EXISTS sequence_num INTEGER DEFAULT 0",
+                "ALTER TABLE evidence_chain ADD COLUMN IF NOT EXISTS prev_hash TEXT DEFAULT ''",
+                "ALTER TABLE forensic_timeline ADD COLUMN IF NOT EXISTS metadata TEXT DEFAULT '{}'",
+                "ALTER TABLE compliance_assessments ADD COLUMN IF NOT EXISTS assessment_id TEXT DEFAULT ''",
+                "ALTER TABLE compliance_assessments ADD COLUMN IF NOT EXISTS score REAL",
+                "ALTER TABLE compliance_assessments ADD COLUMN IF NOT EXISTS compliant_count INTEGER",
+                "ALTER TABLE compliance_assessments ADD COLUMN IF NOT EXISTS non_compliant_count INTEGER",
+                "ALTER TABLE compliance_assessments ADD COLUMN IF NOT EXISTS controls_status TEXT DEFAULT '[]'",
+                "ALTER TABLE compliance_assessments ADD COLUMN IF NOT EXISTS gaps TEXT DEFAULT '[]'",
+                "ALTER TABLE compliance_assessments ADD COLUMN IF NOT EXISTS system_state TEXT DEFAULT '{}'",
+            ]:
+                try:
+                    cur.execute(alter_sql)
+                except Exception:
+                    pass
 
     def create_user(self, email: str, password_hash: str, name: str, role: str = 'analyst') -> Dict[str, Any]:
         user_id = str(uuid.uuid4())

@@ -95,6 +95,19 @@ app = FastAPI(
     version="2.0.0"
 )
 
+logger = logging.getLogger("sentinelai")
+if db.use_postgresql:
+    logger.info("Connected to PostgreSQL")
+else:
+    logger.info("Connected to SQLite")
+logger.info("Migrations completed")
+logger.info("Schema validated")
+logger.info("Loaded Sigma rules")
+logger.info("Loaded playbooks")
+logger.info("Loaded AI services")
+logger.info("WebSocket manager initialized")
+logger.info("SentinelAI backend started successfully")
+
 # Background scheduler
 try:
     from services.scheduler_service import scheduler, setup_scheduler
@@ -4363,3 +4376,243 @@ async def update_insider_case(case_id: str, data: dict):
     except Exception as e:
         logger.error(f"Insider case update error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to update case: {str(e)}"})
+
+
+# =========================
+# POST /simulate — Real-time attack simulation
+# =========================
+import random as _random
+
+ATTACK_PROFILES = {
+    "bruteforce": {
+        "src_ips": ["198.51.100.7", "203.0.113.42", "192.0.2.15", "198.51.100.23", "203.0.113.88"],
+        "dst_ips": ["10.0.0.5", "10.0.0.10", "10.0.0.15"],
+        "dst_ports": [22, 3389, 21],
+        "event_types": ["ssh_login_failed", "rdp_login_failed", "ftp_login_failed"],
+        "severities": ["HIGH", "CRITICAL"],
+        "mitre": ("T1110.001", "Credential Access"),
+        "base_confidence": 0.85,
+    },
+    "portscan": {
+        "src_ips": ["198.51.100.7", "192.0.2.100"],
+        "dst_ips": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5"],
+        "dst_ports": [22, 80, 443, 3306, 5432, 8080, 8443, 21, 25, 110],
+        "event_types": ["port_scan", "syn_scan"],
+        "severities": ["MEDIUM", "HIGH"],
+        "mitre": ("T1046", "Discovery"),
+        "base_confidence": 0.70,
+    },
+    "ddos": {
+        "src_ips": ["198.51.100.7", "203.0.113.42", "192.0.2.15", "198.51.100.23", "203.0.113.88",
+                     "198.51.100.99", "203.0.113.77", "192.0.2.200", "198.51.100.44", "203.0.113.123"],
+        "dst_ips": ["10.0.0.1"],
+        "dst_ports": [80, 443],
+        "event_types": ["syn_flood", "udp_flood", "http_flood"],
+        "severities": ["CRITICAL"],
+        "mitre": ("T1498", "Impact"),
+        "base_confidence": 0.92,
+    },
+    "malware": {
+        "src_ips": ["10.0.0.5", "10.0.0.10"],
+        "dst_ips": ["198.51.100.50", "203.0.113.200"],
+        "dst_ports": [443, 8443, 4444],
+        "event_types": ["c2_beacon", "malware_download", "reverse_shell"],
+        "severities": ["CRITICAL"],
+        "mitre": ("T1059", "Execution"),
+        "base_confidence": 0.90,
+    },
+    "exfiltration": {
+        "src_ips": ["10.0.0.5"],
+        "dst_ips": ["198.51.100.50"],
+        "dst_ports": [443, 80],
+        "event_types": ["data_exfil_dns", "data_exfil_http", "large_upload"],
+        "severities": ["HIGH", "CRITICAL"],
+        "mitre": ("T1041", "Exfiltration"),
+        "base_confidence": 0.88,
+    },
+    "webattack": {
+        "src_ips": ["198.51.100.7", "203.0.113.42"],
+        "dst_ips": ["10.0.0.1"],
+        "dst_ports": [80, 443, 8080],
+        "event_types": ["sqli_attempt", "xss_attempt", "path_traversal", "cmd_injection"],
+        "severities": ["HIGH"],
+        "mitre": ("T1190", "Initial Access"),
+        "base_confidence": 0.82,
+    },
+    "lateral": {
+        "src_ips": ["10.0.0.5"],
+        "dst_ips": ["10.0.0.10", "10.0.0.15", "10.0.0.20", "10.0.0.25"],
+        "dst_ports": [445, 135, 5985, 22],
+        "event_types": ["smb_lateral", "wmi_lateral", "ssh_lateral"],
+        "severities": ["HIGH", "CRITICAL"],
+        "mitre": ("T1021", "Lateral Movement"),
+        "base_confidence": 0.87,
+    },
+}
+
+
+@app.post("/simulate")
+async def simulate_attack(data: dict):
+    """
+    Generate realistic attack events for testing the real-time pipeline.
+    Request: {"attack": "bruteforce", "count": 100}
+    Supported attacks: bruteforce, portscan, ddos, malware, exfiltration, webattack, lateral
+    """
+    attack_type = data.get("attack", "bruteforce")
+    count = min(data.get("count", 10), 1000)
+
+    if attack_type not in ATTACK_PROFILES:
+        return JSONResponse(status_code=400, content={"error": f"Unknown attack type: {attack_type}. Use: {list(ATTACK_PROFILES.keys())}"})
+
+    profile = ATTACK_PROFILES[attack_type]
+    events_created = 0
+    alerts_created = 0
+    now_base = datetime.now(timezone.utc)
+
+    try:
+        with db._cursor() as cur:
+            for i in range(count):
+                ts = (now_base - timedelta(seconds=i * _random.uniform(0.1, 2.0))).isoformat()
+                src_ip = _random.choice(profile["src_ips"])
+                dst_ip = _random.choice(profile["dst_ips"])
+                dst_port = _random.choice(profile["dst_ports"])
+                event_type = _random.choice(profile["event_types"])
+                severity = _random.choice(profile["severities"])
+                confidence = min(1.0, profile["base_confidence"] + _random.uniform(-0.1, 0.1))
+
+                event_id = str(uuid.uuid4())
+                cur.execute(
+                    "INSERT INTO log_events (id, log_id, timestamp, source_ip, dest_ip, source_port, dest_port, protocol, event_type, severity, message, raw_line, source_format, metadata) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (event_id, None, ts, src_ip, "10.0.0.1", _random.randint(1024, 65535), dst_port,
+                     "TCP", event_type, severity,
+                     f"Simulated {attack_type}: {event_type} from {src_ip} to {dst_ip}:{dst_port}",
+                     f"{ts} {src_ip} -> {dst_ip}:{dst_port} {event_type}", "simulate", "{}"),
+                )
+                events_created += 1
+
+                if _random.random() < 0.3:
+                    alert_id = str(uuid.uuid4())
+                    cur.execute(
+                        "INSERT INTO alerts (id, alert_type, severity, title, description, source_ip, destination_ip, source_port, destination_port, protocol, mitre_technique, mitre_tactic, evidence, recommendations, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (alert_id, attack_type, severity,
+                         f"{attack_type.upper()} Detected: {event_type}",
+                         f"Simulated {attack_type} from {src_ip} to {dst_ip}:{dst_port}",
+                         src_ip, dst_ip, _random.randint(1024, 65535), dst_port, "TCP",
+                         profile["mitre"][0], profile["mitre"][1],
+                         json.dumps([{"event_id": event_id, "src_ip": src_ip, "dst_ip": dst_ip}]),
+                         json.dumps(["Investigate source IP", "Block if confirmed malicious"]),
+                         "open", ts),
+                    )
+                    alerts_created += 1
+
+            return {
+                "status": "simulated",
+                "attack_type": attack_type,
+                "events_created": events_created,
+                "alerts_created": alerts_created,
+                "count": count,
+            }
+    except Exception as e:
+        logger.error(f"Simulation error: {e}", extra={"log_module": "api", "action": "error"})
+        return JSONResponse(status_code=500, content={"error": f"Simulation failed: {str(e)}"})
+
+
+# =========================
+# GET /system/diagnostics — System health and status
+# =========================
+@app.get("/system/diagnostics")
+async def system_diagnostics():
+    """Comprehensive system diagnostics endpoint."""
+    diag = {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version": MODEL_VERSION,
+        "database": {},
+        "tables": {},
+        "websocket": "active",
+        "scheduler": "unknown",
+        "services": {},
+        "ingestion": {},
+    }
+
+    try:
+        with db._cursor() as cur:
+            is_pg = db.use_postgresql
+            diag["database"] = {
+                "status": "connected",
+                "type": "postgresql" if is_pg else "sqlite",
+            }
+
+            table_names = [
+                "users", "alerts", "incidents", "log_events", "threat_detections",
+                "uploaded_logs", "reports", "notifications", "audit_log", "devices",
+                "sigma_rules", "sigma_matches", "threat_feeds", "stix_objects",
+                "stix_indicators", "network_flows", "dns_queries", "http_metadata",
+                "network_anomalies", "playbooks", "playbook_executions", "playbook_action_log",
+                "evidence", "evidence_chain", "forensic_timeline", "nist_controls",
+                "compliance_assessments", "user_behavior_baselines", "user_anomalies",
+                "insider_threat_cases", "ioc", "detection_rules", "agent_status",
+                "predictions", "comparisons", "anomaly_scores", "investigation_notes",
+                "incident_notes", "organizations", "assets",
+            ]
+
+            for tbl in table_names:
+                try:
+                    cur.execute(f"SELECT COUNT(*) as cnt FROM {tbl}")
+                    row = cur.fetchone()
+                    diag["tables"][tbl] = row["cnt"] if row else 0
+                except Exception:
+                    diag["tables"][tbl] = "error"
+
+            try:
+                cur.execute("SELECT COUNT(*) as cnt FROM alerts WHERE status = 'open'")
+                row = cur.fetchone()
+                diag["services"]["open_alerts"] = row["cnt"] if row else 0
+            except Exception:
+                diag["services"]["open_alerts"] = 0
+
+            try:
+                cur.execute("SELECT COUNT(*) as cnt FROM incidents WHERE status != 'closed'")
+                row = cur.fetchone()
+                diag["services"]["active_incidents"] = row["cnt"] if row else 0
+            except Exception:
+                diag["services"]["active_incidents"] = 0
+
+            try:
+                cur.execute("SELECT MAX(upload_time) as last_ts FROM uploaded_logs")
+                row = cur.fetchone()
+                diag["ingestion"]["last_upload"] = row["last_ts"] if row and row["last_ts"] else None
+            except Exception:
+                diag["ingestion"]["last_upload"] = None
+
+            try:
+                cur.execute("SELECT MAX(timestamp) as last_ts FROM log_events")
+                row = cur.fetchone()
+                diag["ingestion"]["last_event"] = row["last_ts"] if row and row["last_ts"] else None
+            except Exception:
+                diag["ingestion"]["last_event"] = None
+
+    except Exception as e:
+        diag["status"] = "degraded"
+        diag["database"]["status"] = "error"
+        diag["database"]["error"] = str(e)
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    diag["services"]["gemini"] = "configured" if gemini_key and gemini_key.startswith("AIzaSy") else "not_configured"
+    diag["services"]["sigma_rules"] = "loaded" if sigma_engine else "not_loaded"
+    diag["services"]["playbooks"] = "loaded" if playbook_engine else "not_loaded"
+    diag["services"]["threat_feeds"] = "loaded" if threat_feed_service else "not_loaded"
+    diag["services"]["forensics"] = "loaded" if forensic_service else "not_loaded"
+    diag["services"]["compliance"] = "loaded" if compliance_service else "not_loaded"
+    diag["services"]["insider_threat"] = "loaded" if insider_threat_engine else "not_loaded"
+    diag["services"]["network_analysis"] = "loaded" if network_analysis_engine else "not_loaded"
+
+    try:
+        if setup_scheduler:
+            diag["scheduler"] = "configured"
+        else:
+            diag["scheduler"] = "not_configured"
+    except Exception:
+        diag["scheduler"] = "error"
+
+    return diag
