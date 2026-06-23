@@ -4652,7 +4652,9 @@ if _static_dir.is_dir():
     from starlette.staticfiles import StaticFiles
     from starlette.responses import FileResponse
 
-    app.mount("/assets", StaticFiles(directory=str(_static_dir / "assets")), name="static-assets")
+    _assets_dir = _static_dir / "assets"
+    if _assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="static-assets")
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):

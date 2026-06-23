@@ -666,13 +666,6 @@ class ComplianceService:
                     except Exception:
                         pass  # Column already exists
 
-                # Ensure UNIQUE constraint on control_id for ON CONFLICT
-                if is_pg:
-                    try:
-                        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_nist_controls_control_id ON nist_controls(control_id)")
-                    except Exception:
-                        pass
-
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS compliance_assessments (
                         id TEXT PRIMARY KEY,
@@ -687,6 +680,30 @@ class ComplianceService:
                         created_at TEXT
                     )
                 """)
+
+        except Exception as e:
+            logger.error(f"Failed to create compliance tables: {e}", exc_info=True)
+            return
+
+        # Seed NIST controls (separate transaction so index failure doesn't block table creation)
+        try:
+            with db._cursor() as cur:
+                is_pg = getattr(db, 'use_postgresql', False)
+
+                if is_pg:
+                    # Remove duplicates first, then create unique index
+                    try:
+                        cur.execute("""
+                            DELETE FROM nist_controls WHERE id NOT IN (
+                                SELECT MIN(id) FROM nist_controls GROUP BY control_id
+                            )
+                        """)
+                    except Exception:
+                        pass
+                    try:
+                        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_nist_controls_control_id ON nist_controls(control_id)")
+                    except Exception:
+                        pass
 
                 for ctrl in NIST_CONTROLS:
                     now = datetime.now(timezone.utc).isoformat()
@@ -704,7 +721,7 @@ class ComplianceService:
 
             logger.info("Compliance tables initialized successfully.")
         except Exception as e:
-            logger.error(f"Failed to initialize compliance tables: {e}", exc_info=True)
+            logger.error(f"Failed to seed NIST controls: {e}", exc_info=True)
 
     def _collect_system_state(self) -> Dict[str, Any]:
         """Collect current system state for compliance assessment."""
