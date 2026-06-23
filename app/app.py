@@ -1842,6 +1842,14 @@ async def download_report(report_id: str, format: str = "json"):
             media_type="text/csv",
             headers={"Content-Disposition": f"attachment; filename=report-{report_id}.csv"},
         )
+    elif format == "pdf":
+        report_data = _json.loads(report.get("data_json", "{}")) if isinstance(report.get("data_json"), str) else report.get("data_json", {})
+        pdf_bytes = report_generator.export_pdf(report_data, title=report.get("title", "SentinelAI Report"))
+        return StreamingResponse(
+            iter([pdf_bytes]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=report-{report_id}.pdf"},
+        )
     else:
         report_data = _json.loads(report.get("data_json", "{}")) if isinstance(report.get("data_json"), str) else report.get("data_json", {})
         json_content = report_generator.export_json(report_data)
@@ -3136,6 +3144,213 @@ async def threat_hunt_search(
 
 
 # =========================
+# Event Explorer — Advanced SIEM Search
+# =========================
+@app.post("/api/events/search")
+async def search_events(request_body: dict = None):
+    """Advanced event search with AND/OR/NOT filtering across all event tables."""
+    if request_body is None:
+        request_body = {}
+
+    query = request_body.get("q", "")
+    filters = request_body.get("filters", [])
+    date_from = request_body.get("date_from", "")
+    date_to = request_body.get("date_to", "")
+    source = request_body.get("source", "")
+    limit = min(request_body.get("limit", 200), 2000)
+    offset = request_body.get("offset", 0)
+    sort_by = request_body.get("sort_by", "timestamp")
+    sort_order = request_body.get("sort_order", "desc")
+
+    try:
+        results = db.search_events_advanced(
+            query=query, filters=filters, date_from=date_from, date_to=date_to,
+            source=source, limit=limit, offset=offset, sort_by=sort_by, sort_order=sort_order
+        )
+        return results
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/events/export")
+async def export_events(format: str = "json", limit: int = 5000):
+    """Export events as JSON or CSV."""
+    try:
+        detections = db.get_threat_detections(limit=limit)
+        alerts = db.get_alerts(limit=limit)
+
+        all_events = []
+        for d in detections:
+            all_events.append({
+                "type": "detection",
+                "timestamp": d.get("detection_time", d.get("timestamp", "")),
+                "severity": d.get("severity", ""),
+                "source_ip": d.get("source_ip", ""),
+                "dest_ip": d.get("dest_ip", ""),
+                "description": d.get("description", ""),
+                "threat_type": d.get("threat_type", ""),
+                "mitre_technique": d.get("mitre_technique", ""),
+            })
+        for a in alerts:
+            all_events.append({
+                "type": "alert",
+                "timestamp": a.get("created_at", ""),
+                "severity": a.get("severity", ""),
+                "source_ip": a.get("source_ip", ""),
+                "dest_ip": a.get("dest_ip", ""),
+                "description": a.get("description", ""),
+                "threat_type": a.get("alert_type", ""),
+                "mitre_technique": a.get("mitre_technique", ""),
+            })
+
+        all_events.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+
+        if format == "csv":
+            import csv
+            import io
+            output = io.StringIO()
+            writer = csv.DictWriter(output, fieldnames=["type", "timestamp", "severity", "source_ip", "dest_ip", "description", "threat_type", "mitre_technique"])
+            writer.writeheader()
+            writer.writerows(all_events)
+            from starlette.responses import Response
+            return Response(content=output.getvalue(), media_type="text/csv",
+                          headers={"Content-Disposition": "attachment; filename=sentinelai_events.csv"})
+
+        return {"events": all_events[:limit], "total": len(all_events)}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/events/stats")
+async def get_event_stats():
+    """Get event statistics for the explorer sidebar."""
+    try:
+        with db._cursor() as cur:
+            # Detection counts by severity
+            cur.execute("SELECT severity, COUNT(*) as count FROM threat_detections GROUP BY severity")
+            sev_rows = cur.fetchall()
+            by_severity = {row['severity']: row['count'] if db.use_postgresql else row[0] for row in sev_rows}
+
+            # Alert counts by type
+            cur.execute("SELECT alert_type, COUNT(*) as count FROM alerts GROUP BY alert_type ORDER BY count DESC")
+            type_rows = cur.fetchall()
+            by_type = {row['alert_type']: row['count'] if db.use_postgresql else row[0] for row in type_rows}
+
+            # Top source IPs
+            if db.use_postgresql:
+                cur.execute("SELECT source_ip::text as sip, COUNT(*) as count FROM threat_detections WHERE source_ip IS NOT NULL AND source_ip::text != '' GROUP BY source_ip ORDER BY count DESC LIMIT 15")
+            else:
+                cur.execute("SELECT source_ip as sip, COUNT(*) as count FROM threat_detections WHERE source_ip IS NOT NULL AND source_ip != '' GROUP BY source_ip ORDER BY count DESC LIMIT 15")
+            ip_rows = cur.fetchall()
+            top_ips = [{"ip": row['sip'], "count": row['count']} for row in ip_rows]
+
+            # Event volume over time (last 24h, hourly buckets)
+            cur.execute("SELECT COUNT(*) as count FROM threat_detections")
+            row = cur.fetchone()
+            total_detections = row['count'] if db.use_postgresql else row[0]
+            cur.execute("SELECT COUNT(*) as count FROM alerts")
+            row = cur.fetchone()
+            total_alerts = row['count'] if db.use_postgresql else row[0]
+            cur.execute("SELECT COUNT(*) as count FROM log_events")
+            row = cur.fetchone()
+            total_events = row['count'] if db.use_postgresql else row[0]
+
+            return {
+                "by_severity": by_severity,
+                "by_type": by_type,
+                "top_source_ips": top_ips,
+                "totals": {
+                    "detections": total_detections,
+                    "alerts": total_alerts,
+                    "events": total_events,
+                }
+            }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# =========================
+# Saved Searches & Bookmarks
+# =========================
+@app.get("/api/hunt/saved")
+async def get_saved_searches():
+    """Get saved threat hunt searches."""
+    try:
+        searches = db.get_hunt_searches(user_id="default", limit=100)
+        return {"searches": searches}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/hunt/saved")
+async def save_hunt_search(request_body: dict = None):
+    """Save a threat hunt search."""
+    if request_body is None:
+        request_body = {}
+    name = request_body.get("name", "")
+    query = request_body.get("query", "")
+    filters = request_body.get("filters", [])
+
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "name is required"})
+
+    try:
+        search_id = db.save_hunt_search(user_id="default", name=name, query=query, filters=filters)
+        return {"id": search_id, "name": name}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/hunt/saved/{search_id}")
+async def delete_saved_search(search_id: str):
+    """Delete a saved search."""
+    try:
+        db.delete_hunt_search(search_id, user_id="default")
+        return {"deleted": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/events/bookmarks")
+async def get_event_bookmarks():
+    """Get event bookmarks."""
+    try:
+        bookmarks = db.get_bookmarks(user_id="default", limit=100)
+        return {"bookmarks": bookmarks}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/events/bookmarks")
+async def add_event_bookmark(request_body: dict = None):
+    """Bookmark an event."""
+    if request_body is None:
+        request_body = {}
+    event_type = request_body.get("event_type", "")
+    event_id = request_body.get("event_id", "")
+    note = request_body.get("note", "")
+
+    if not event_type or not event_id:
+        return JSONResponse(status_code=400, content={"error": "event_type and event_id are required"})
+
+    try:
+        bookmark_id = db.bookmark_event(user_id="default", event_type=event_type, event_id=event_id, note=note)
+        return {"id": bookmark_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/events/bookmarks/{bookmark_id}")
+async def remove_event_bookmark(bookmark_id: str):
+    """Remove an event bookmark."""
+    try:
+        db.remove_bookmark(bookmark_id, user_id="default")
+        return {"deleted": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# =========================
 # Security Metrics (KPI Dashboard)
 # =========================
 @app.get("/api/metrics/security")
@@ -3535,6 +3750,216 @@ async def get_sigma_stats():
     except Exception as e:
         logger.error(f"Sigma stats error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch Sigma stats: {str(e)}"})
+
+
+# =========================
+# Rule Packs Management
+# =========================
+import yaml as _yaml
+
+_RULE_PACKS_DIR = Path(__file__).parent / "rule_packs"
+
+@app.get("/api/rule-packs")
+async def get_rule_packs():
+    """List all available rule packs from database and built-in directory."""
+    packs = []
+
+    # Load built-in packs from rule_packs/ directory
+    if _RULE_PACKS_DIR.is_dir():
+        for pack_file in sorted(_RULE_PACKS_DIR.glob("*.yaml")):
+            try:
+                with open(pack_file, "r", encoding="utf-8") as f:
+                    data = _yaml.safe_load(f)
+                pack_meta = data.get("pack", {})
+                rules = data.get("rules", [])
+                packs.append({
+                    "id": pack_meta.get("id", pack_file.stem),
+                    "name": pack_meta.get("name", pack_file.stem),
+                    "description": pack_meta.get("description", ""),
+                    "version": pack_meta.get("version", "1.0"),
+                    "author": pack_meta.get("author", "Unknown"),
+                    "enabled": pack_meta.get("enabled", True),
+                    "rule_count": len(rules),
+                    "source": "built-in",
+                    "file": pack_file.name,
+                })
+            except Exception:
+                continue
+
+    # Load custom packs from database
+    try:
+        with db._cursor() as cur:
+            if db.use_postgresql:
+                cur.execute("SELECT * FROM rule_packs WHERE enabled = 1 ORDER BY name")
+            else:
+                cur.execute("SELECT * FROM rule_packs WHERE enabled = 1 ORDER BY name")
+            for row in cur.fetchall():
+                r = dict(row)
+                rules = json.loads(r.get("rules_json", "[]"))
+                packs.append({
+                    "id": r["id"],
+                    "name": r["name"],
+                    "description": r.get("description", ""),
+                    "version": r.get("version", "1.0"),
+                    "author": r.get("author", ""),
+                    "enabled": bool(r.get("enabled", 1)),
+                    "rule_count": len(rules),
+                    "source": "custom",
+                })
+    except Exception:
+        pass
+
+    total_rules = sum(p["rule_count"] for p in packs)
+    return {"packs": packs, "total_packs": len(packs), "total_rules": total_rules}
+
+
+@app.get("/api/rule-packs/{pack_id}")
+async def get_rule_pack(pack_id: str):
+    """Get a specific rule pack with all rules."""
+    # Check built-in directory
+    if _RULE_PACKS_DIR.is_dir():
+        for pack_file in _RULE_PACKS_DIR.glob("*.yaml"):
+            try:
+                with open(pack_file, "r", encoding="utf-8") as f:
+                    data = _yaml.safe_load(f)
+                pack_meta = data.get("pack", {})
+                if pack_meta.get("id") == pack_id:
+                    rules = data.get("rules", [])
+                    return {
+                        "id": pack_meta.get("id", pack_id),
+                        "name": pack_meta.get("name", ""),
+                        "description": pack_meta.get("description", ""),
+                        "version": pack_meta.get("version", "1.0"),
+                        "author": pack_meta.get("author", ""),
+                        "enabled": pack_meta.get("enabled", True),
+                        "rules": rules,
+                        "source": "built-in",
+                    }
+            except Exception:
+                continue
+
+    # Check database
+    try:
+        with db._cursor() as cur:
+            if db.use_postgresql:
+                cur.execute("SELECT * FROM rule_packs WHERE id = %s", (pack_id,))
+            else:
+                cur.execute("SELECT * FROM rule_packs WHERE id = ?", (pack_id,))
+            row = cur.fetchone()
+            if row:
+                r = dict(row)
+                return {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "description": r.get("description", ""),
+                    "version": r.get("version", "1.0"),
+                    "author": r.get("author", ""),
+                    "enabled": bool(r.get("enabled", 1)),
+                    "rules": json.loads(r.get("rules_json", "[]")),
+                    "source": "custom",
+                }
+    except Exception:
+        pass
+
+    return JSONResponse(status_code=404, content={"error": f"Rule pack '{pack_id}' not found"})
+
+
+@app.post("/api/rule-packs")
+async def create_rule_pack(data: dict = None):
+    """Create a custom rule pack."""
+    if data is None:
+        data = {}
+    pack_id = data.get("id", str(uuid.uuid4()))
+    name = data.get("name", "")
+    description = data.get("description", "")
+    version = data.get("version", "1.0")
+    author = data.get("author", "")
+    rules = data.get("rules", [])
+    now = datetime.now(timezone.utc).isoformat()
+
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "name is required"})
+
+    try:
+        with db._cursor() as cur:
+            if db.use_postgresql:
+                cur.execute(
+                    "INSERT INTO rule_packs (id, name, description, version, author, rules_json, enabled, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s)",
+                    (pack_id, name, description, version, author, json.dumps(rules), now, now)
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO rule_packs (id, name, description, version, author, rules_json, enabled, created_at, updated_at) VALUES (?,?,?,?,?,?,1,?,?)",
+                    (pack_id, name, description, version, author, json.dumps(rules), now, now)
+                )
+        return {"id": pack_id, "name": name, "rule_count": len(rules)}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/rule-packs/{pack_id}")
+async def delete_rule_pack(pack_id: str):
+    """Delete a custom rule pack."""
+    try:
+        with db._cursor() as cur:
+            if db.use_postgresql:
+                cur.execute("DELETE FROM rule_packs WHERE id = %s", (pack_id,))
+            else:
+                cur.execute("DELETE FROM rule_packs WHERE id = ?", (pack_id,))
+        return {"deleted": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/rule-packs/{pack_id}/toggle")
+async def toggle_rule_pack(pack_id: str):
+    """Enable or disable a rule pack."""
+    try:
+        with db._cursor() as cur:
+            if db.use_postgresql:
+                cur.execute("UPDATE rule_packs SET enabled = NOT enabled, updated_at = NOW() WHERE id = %s", (pack_id,))
+            else:
+                cur.execute("UPDATE rule_packs SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END, updated_at = datetime('now') WHERE id = ?", (pack_id,))
+        return {"toggled": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/rule-packs/test")
+async def test_rule_pack(data: dict = None):
+    """Test a rule against sample events."""
+    if data is None:
+        data = {}
+    rule = data.get("rule", {})
+    sample_events = data.get("events", [])
+
+    matches = []
+    for event in sample_events:
+        condition = rule.get("condition", {})
+        if not condition:
+            continue
+
+        field = condition.get("field", "")
+        op = condition.get("op", "equals")
+        value = condition.get("value", "")
+        event_value = str(event.get(field, ""))
+
+        matched = False
+        if op == "equals" and event_value == value:
+            matched = True
+        elif op == "contains" and value in event_value:
+            matched = True
+        elif op == "gt" and float(event_value or 0) > float(value):
+            matched = True
+        elif op == "lt" and float(event_value or 0) < float(value):
+            matched = True
+        elif op == "in" and event_value in [v.strip() for v in value.split(",")]:
+            matched = True
+
+        if matched:
+            matches.append(event)
+
+    return {"matches": len(matches), "matched_events": matches, "total_tested": len(sample_events)}
 
 
 # =========================

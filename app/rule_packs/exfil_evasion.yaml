@@ -1,0 +1,205 @@
+# SentinelAI Built-in Rule Pack: Data Exfiltration & Defense Evasion
+# Detects data staging, exfiltration channels, log tampering, and evasion techniques
+
+pack:
+  id: "exfil-evasion-v1"
+  name: "Data Exfiltration & Defense Evasion"
+  description: "Detects data staging, exfiltration channels, log tampering, and evasion techniques"
+  version: "1.0"
+  author: "SentinelAI"
+  enabled: true
+
+rules:
+  - id: "large-data-transfer"
+    name: "Large Data Transfer Outbound"
+    description: "Unusually large outbound data transfer detected"
+    severity: "HIGH"
+    mitre_technique: "T1048"
+    mitre_tactic: "Exfiltration"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "network_flow"
+    filter:
+      field: "bytes_out"
+      op: "gt"
+      value: "104857600"
+    actions:
+      - type: "alert"
+        title: "Large Outbound Transfer: {bytes_out} bytes"
+        severity: "HIGH"
+
+  - id: "dns-tunneling"
+    name: "DNS Tunneling Detected"
+    description: "Suspicious DNS queries with high entropy subdomains"
+    severity: "HIGH"
+    mitre_technique: "T1071.004"
+    mitre_tactic: "Command and Control"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "dns_query"
+    filter:
+      field: "query_length"
+      op: "gt"
+      value: "50"
+    actions:
+      - type: "alert"
+        title: "Possible DNS Tunneling: {query}"
+        severity: "HIGH"
+
+  - id: "suspicious-dns-txt"
+    name: "Suspicious DNS TXT Record"
+    description: "DNS TXT query to suspicious domain"
+    severity: "MEDIUM"
+    mitre_technique: "T1071.004"
+    mitre_tactic: "Command and Control"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "dns_query"
+    filter:
+      field: "record_type"
+      op: "equals"
+      value: "TXT"
+    filter2:
+      field: "query_length"
+      op: "gt"
+      value: "100"
+    actions:
+      - type: "alert"
+        title: "Suspicious DNS TXT Query"
+        severity: "MEDIUM"
+
+  - id: "log-clear"
+    name: "Security Log Cleared"
+    description: "Security event log was cleared"
+    severity: "CRITICAL"
+    mitre_technique: "T1070.001"
+    mitre_tactic: "Defense Evasion"
+    condition:
+      field: "event_id"
+      op: "equals"
+      value: "1102"
+    actions:
+      - type: "alert"
+        title: "Security Log Cleared by {actor}"
+        severity: "CRITICAL"
+
+  - id: "process-injection"
+    name: "Process Injection Detected"
+    description: "Suspicious process injection pattern"
+    severity: "CRITICAL"
+    mitre_technique: "T1055"
+    mitre_tactic: "Defense Evasion"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "process_create"
+    filter:
+      field: "creation_flags"
+      op: "contains"
+      value: "0x00001000"
+    actions:
+      - type: "alert"
+        title: "Process Injection: {process_name}"
+        severity: "CRITICAL"
+
+  - id: "obfuscated-powershell"
+    name: "Obfuscated PowerShell"
+    description: "PowerShell command with obfuscation indicators"
+    severity: "HIGH"
+    mitre_technique: "T1059.001"
+    mitre_tactic: "Execution"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "powershell_command"
+    filter:
+      field: "command_line"
+      op: "contains"
+      value: "-enc"
+    actions:
+      - type: "alert"
+        title: "Obfuscated PowerShell Detected"
+        severity: "HIGH"
+
+  - id: "amsi-bypass"
+    name: "AMSI Bypass Attempt"
+    description: "PowerShell attempting to bypass AMSI"
+    severity: "CRITICAL"
+    mitre_technique: "T1562.001"
+    mitre_tactic: "Defense Evasion"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "powershell_command"
+    filter:
+      field: "command_line"
+      op: "contains"
+      value: "AmsiUtils"
+    actions:
+      - type: "alert"
+        title: "AMSI Bypass Attempt"
+        severity: "CRITICAL"
+
+  - id: "certutil-download"
+    name: "CertUtil Download"
+    description: "CertUtil used for file download (common LOLBin)"
+    severity: "MEDIUM"
+    mitre_technique: "T1105"
+    mitre_tactic: "Command and Control"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "process_create"
+    filter:
+      field: "process_name"
+      op: "equals"
+      value: "certutil.exe"
+    filter2:
+      field: "command_line"
+      op: "contains"
+      value: "-urlcache"
+    actions:
+      - type: "alert"
+        title: "CertUtil Download Detected"
+        severity: "MEDIUM"
+
+  - id: "bits-job"
+    name: "BITS Job Creation"
+    description: "Background Intelligent Transfer Service job created"
+    severity: "MEDIUM"
+    mitre_technique: "T1197"
+    mitre_tactic: "Defense Evasion"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "process_create"
+    filter:
+      field: "process_name"
+      op: "equals"
+      value: "bitsadmin.exe"
+    actions:
+      - type: "alert"
+        title: "BITS Job Created"
+        severity: "MEDIUM"
+
+  - id: "rundll32-execution"
+    name: "Rundll32 Execution"
+    description: "Rundll32 used to execute DLL (common LOLBin)"
+    severity: "MEDIUM"
+    mitre_technique: "T1218.011"
+    mitre_tactic: "Defense Evasion"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "process_create"
+    filter:
+      field: "process_name"
+      op: "equals"
+      value: "rundll32.exe"
+    actions:
+      - type: "alert"
+        title: "Rundll32 Execution"
+        severity: "MEDIUM"

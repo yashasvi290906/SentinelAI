@@ -1,0 +1,179 @@
+# SentinelAI Built-in Rule Pack: Lateral Movement
+# Detects pass-the-hash, RDP lateral movement, SMB abuse, and remote service exploitation
+
+pack:
+  id: "lateral-movement-v1"
+  name: "Lateral Movement"
+  description: "Detects pass-the-hash, RDP lateral movement, SMB abuse, and remote service exploitation"
+  version: "1.0"
+  author: "SentinelAI"
+  enabled: true
+
+rules:
+  - id: "pass-the-hash"
+    name: "Pass-the-Hash Detected"
+    description: "NTLM authentication using harvested hash"
+    severity: "CRITICAL"
+    mitre_technique: "T1550.002"
+    mitre_tactic: "Lateral Movement"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "successful_logon"
+    filter:
+      field: "logon_type"
+      op: "equals"
+      value: "Network"
+    filter2:
+      field: "authentication_package"
+      op: "equals"
+      value: "NTLM"
+    anomaly: true
+    actions:
+      - type: "alert"
+        title: "Possible Pass-the-Hash: {target_username}"
+        severity: "CRITICAL"
+
+  - id: "rdp-lateral-movement"
+    name: "RDP Lateral Movement"
+    description: "RDP connection to internal server from non-admin workstation"
+    severity: "HIGH"
+    mitre_technique: "T1021.001"
+    mitre_tactic: "Lateral Movement"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "successful_logon"
+    filter:
+      field: "dest_port"
+      op: "equals"
+      value: "3389"
+    filter2:
+      field: "dest_is_server"
+      op: "equals"
+      value: "true"
+    actions:
+      - type: "alert"
+        title: "RDP Lateral Movement to {dest_ip}"
+        severity: "HIGH"
+
+  - id: "smb-lateral-movement"
+    name: "SMB Lateral Movement"
+    description: "Successful SMB connection followed by remote execution"
+    severity: "HIGH"
+    mitre_technique: "T1021.002"
+    mitre_tactic: "Lateral Movement"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "smb_connection"
+    correlation:
+      subsequent_event: "remote_service_install"
+      window_minutes: 5
+    actions:
+      - type: "alert"
+        title: "SMB Lateral Movement from {source_ip}"
+        severity: "HIGH"
+
+  - id: "remote-service-install"
+    name: "Remote Service Installation"
+    description: "New service installed via remote mechanism"
+    severity: "CRITICAL"
+    mitre_technique: "T1569.002"
+    mitre_tactic: "Execution"
+    condition:
+      field: "event_id"
+      op: "equals"
+      value: "7045"
+    filter:
+      field: "remote_execution"
+      op: "equals"
+      value: "true"
+    actions:
+      - type: "alert"
+        title: "Remote Service Installed: {service_name}"
+        severity: "CRITICAL"
+
+  - id: "wmi-execution"
+    name: "WMI Remote Execution"
+    description: "Process creation via WMI remote command"
+    severity: "HIGH"
+    mitre_technique: "T1047"
+    mitre_tactic: "Execution"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "process_create"
+    filter:
+      field: "parent_process_name"
+      op: "contains"
+      value: "wmiprvse"
+    actions:
+      - type: "alert"
+        title: "WMI Remote Execution on {hostname}"
+        severity: "HIGH"
+
+  - id: "powershell-remote"
+    name: "PowerShell Remote Execution"
+    description: "PowerShell invoked remotely via WinRM or PSRemoting"
+    severity: "HIGH"
+    mitre_technique: "T1059.001"
+    mitre_tactic: "Execution"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "process_create"
+    filter:
+      field: "process_name"
+      op: "contains"
+      value: "powershell"
+    filter2:
+      field: "remote_session"
+      op: "equals"
+      value: "true"
+    actions:
+      - type: "alert"
+        title: "Remote PowerShell: {source_ip} -> {hostname}"
+        severity: "HIGH"
+
+  - id: "dcom-lateral"
+    name: "DCOM Lateral Movement"
+    description: "Lateral movement using DCOM objects"
+    severity: "HIGH"
+    mitre_technique: "T1021.003"
+    mitre_tactic: "Lateral Movement"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "process_create"
+    filter:
+      field: "parent_process_name"
+      op: "in"
+      value: "svchost,dllhost"
+    filter2:
+      field: "command_line"
+      op: "contains"
+      value: "\\pipe\\"
+    actions:
+      - type: "alert"
+        title: "DCOM Lateral Movement Attempt"
+        severity: "HIGH"
+
+  - id: "smb-file-write-remote"
+    name: "Remote File Write via SMB"
+    description: "File written to admin share via SMB"
+    severity: "HIGH"
+    mitre_technique: "T1021.002"
+    mitre_tactic: "Lateral Movement"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "file_write"
+    filter:
+      field: "share_name"
+      op: "in"
+      value: "ADMIN$,C$,IPC$"
+    actions:
+      - type: "alert"
+        title: "Remote File Write to {share_name}"
+        severity: "HIGH"

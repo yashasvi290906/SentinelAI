@@ -790,6 +790,52 @@ class DatabaseManager:
                     created_at TEXT,
                     updated_at TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS hunt_saved_searches (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    query_text TEXT DEFAULT '',
+                    filters_json TEXT DEFAULT '[]',
+                    created_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS event_bookmarks (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    event_id TEXT NOT NULL,
+                    note TEXT DEFAULT '',
+                    created_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS rule_packs (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    version TEXT DEFAULT '1.0',
+                    author TEXT DEFAULT '',
+                    rules_json TEXT DEFAULT '[]',
+                    enabled INTEGER DEFAULT 1,
+                    created_at TEXT,
+                    updated_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS playbook_runs (
+                    id TEXT PRIMARY KEY,
+                    playbook_id TEXT NOT NULL,
+                    playbook_name TEXT DEFAULT '',
+                    triggered_by TEXT DEFAULT '',
+                    trigger_type TEXT DEFAULT 'manual',
+                    status TEXT DEFAULT 'running',
+                    input_data TEXT DEFAULT '{}',
+                    output_data TEXT DEFAULT '{}',
+                    actions_completed INTEGER DEFAULT 0,
+                    actions_failed INTEGER DEFAULT 0,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    error_message TEXT DEFAULT ''
+                );
             """)
 
             for alter_sql in [
@@ -1473,6 +1519,52 @@ class DatabaseManager:
                     resolution TEXT,
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     updated_at TIMESTAMPTZ
+                );
+
+                CREATE TABLE IF NOT EXISTS hunt_saved_searches (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    query_text TEXT DEFAULT '',
+                    filters_json TEXT DEFAULT '[]',
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS event_bookmarks (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    event_id TEXT NOT NULL,
+                    note TEXT DEFAULT '',
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS rule_packs (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    version TEXT DEFAULT '1.0',
+                    author TEXT DEFAULT '',
+                    rules_json TEXT DEFAULT '[]',
+                    enabled INTEGER DEFAULT 1,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ
+                );
+
+                CREATE TABLE IF NOT EXISTS playbook_runs (
+                    id TEXT PRIMARY KEY,
+                    playbook_id TEXT NOT NULL,
+                    playbook_name TEXT DEFAULT '',
+                    triggered_by TEXT DEFAULT '',
+                    trigger_type TEXT DEFAULT 'manual',
+                    status TEXT DEFAULT 'running',
+                    input_data TEXT DEFAULT '{}',
+                    output_data TEXT DEFAULT '{}',
+                    actions_completed INTEGER DEFAULT 0,
+                    actions_failed INTEGER DEFAULT 0,
+                    started_at TIMESTAMPTZ DEFAULT NOW(),
+                    completed_at TIMESTAMPTZ,
+                    error_message TEXT DEFAULT ''
                 );
             """)
 
@@ -2728,6 +2820,276 @@ class DatabaseManager:
         values = list(updates.values()) + [agent_id]
         with self._cursor() as cur:
             cur.execute(f"UPDATE agent_status SET {set_clause} WHERE id = {'%s' if USE_POSTGRESQL else '?'}", tuple(values))
+
+    def search_events_advanced(self, query: str = "", filters: List[Dict] = None,
+                                date_from: str = "", date_to: str = "",
+                                source: str = "", limit: int = 500, offset: int = 0,
+                                sort_by: str = "timestamp", sort_order: str = "desc") -> Dict[str, Any]:
+        """Advanced event search with AND/OR/NOT filtering across all event tables."""
+        results = {"detections": [], "alerts": [], "events": [], "total": 0,
+                   "field_stats": {}, "timeline": []}
+
+        # Build filter conditions
+        conditions = []
+        params = []
+
+        def _build_conditions(table_alias: str = ""):
+            nonlocal conditions, params
+            conditions = []
+            params = []
+
+            if date_from:
+                conditions.append(f"timestamp >= {'%s' if USE_POSTGRESQL else '?'}")
+                params.append(date_from)
+            if date_to:
+                conditions.append(f"timestamp <= {'%s' if USE_POSTGRESQL else '?'}")
+                params.append(date_to)
+
+            if filters:
+                for f in filters:
+                    field = f.get("field", "")
+                    op = f.get("op", "contains")
+                    value = f.get("value", "")
+                    negate = f.get("negate", False)
+
+                    if not field or not value:
+                        continue
+
+                    if op == "equals":
+                        clause = f"{field} = {'%s' if USE_POSTGRESQL else '?'}"
+                    elif op == "contains":
+                        clause = f"{field} ILIKE {'%s' if USE_POSTGRESQL else '?'}" if USE_POSTGRESQL else f"{field} LIKE {'%s' if USE_POSTGRESQL else '?'}"
+                        value = f"%{value}%" if USE_POSTGRESQL else f"%{value}%"
+                    elif op == "starts_with":
+                        clause = f"{field} ILIKE {'%s' if USE_POSTGRESQL else '?'}" if USE_POSTGRESQL else f"{field} LIKE {'%s' if USE_POSTGRESQL else '?'}"
+                        value = f"{value}%" if USE_POSTGRESQL else f"{value}%"
+                    elif op == "ends_with":
+                        clause = f"{field} ILIKE {'%s' if USE_POSTGRESQL else '?'}" if USE_POSTGRESQL else f"{field} LIKE {'%s' if USE_POSTGRESQL else '?'}"
+                        value = f"%{value}" if USE_POSTGRESQL else f"%{value}"
+                    elif op == "gt":
+                        clause = f"{field} > {'%s' if USE_POSTGRESQL else '?'}"
+                    elif op == "lt":
+                        clause = f"{field} < {'%s' if USE_POSTGRESQL else '?'}"
+                    elif op == "in":
+                        placeholders = ", ".join(["%s" if USE_POSTGRESQL else "?" for _ in value.split(",")])
+                        clause = f"{field} IN ({placeholders})"
+                        params.extend([v.strip() for v in value.split(",")])
+                        if negate:
+                            clause = f"NOT ({clause})"
+                        conditions.append(clause)
+                        continue
+                    else:
+                        continue
+
+                    if negate:
+                        clause = f"NOT ({clause})"
+                    conditions.append(clause)
+                    params.append(value)
+
+        # Search detections
+        try:
+            _build_conditions()
+            where = " WHERE " + " AND ".join(conditions) if conditions else ""
+            limit_ph = "%s" if USE_POSTGRESQL else "?"
+            offset_ph = "%s" if USE_POSTGRESQL else "?"
+            sort_dir = "DESC" if sort_order == "desc" else "ASC"
+            sort_col = sort_by if sort_by in ("timestamp", "severity", "threat_type", "source_ip", "created_at") else "timestamp"
+            query_d = f"SELECT * FROM threat_detections{where} ORDER BY {sort_col} {sort_dir} LIMIT {limit_ph} OFFSET {limit_ph}"
+            query_params = list(params) + [limit, offset]
+
+            with self._cursor() as cur:
+                cur.execute(query_d, tuple(query_params))
+                results["detections"] = [dict(row) for row in cur.fetchall()]
+
+                # Total count
+                count_q = f"SELECT COUNT(*) as cnt FROM threat_detections{where}"
+                cur.execute(count_q, tuple(params))
+                row = cur.fetchone()
+                results["total"] += row['cnt'] if USE_POSTGRESQL else row[0]
+        except Exception:
+            pass
+
+        # Search alerts
+        try:
+            _build_conditions()
+            where = " WHERE " + " AND ".join(conditions) if conditions else ""
+            limit_ph = "%s" if USE_POSTGRESQL else "?"
+            offset_ph = "%s" if USE_POSTGRESQL else "?"
+            query_a = f"SELECT * FROM alerts{where} ORDER BY created_at DESC LIMIT {limit_ph} OFFSET {offset_ph}"
+            query_params = list(params) + [limit, offset]
+
+            with self._cursor() as cur:
+                cur.execute(query_a, tuple(query_params))
+                results["alerts"] = [dict(row) for row in cur.fetchall()]
+
+                count_q = f"SELECT COUNT(*) as cnt FROM alerts{where}"
+                cur.execute(count_q, tuple(params))
+                row = cur.fetchone()
+                results["total"] += row['cnt'] if USE_POSTGRESQL else row[0]
+        except Exception:
+            pass
+
+        # Search log_events
+        try:
+            _build_conditions()
+            where = " WHERE " + " AND ".join(conditions) if conditions else ""
+            limit_ph = "%s" if USE_POSTGRESQL else "?"
+            offset_ph = "%s" if USE_POSTGRESQL else "?"
+            query_e = f"SELECT * FROM log_events{where} ORDER BY timestamp DESC LIMIT {limit_ph} OFFSET {offset_ph}"
+            query_params = list(params) + [limit, offset]
+
+            with self._cursor() as cur:
+                cur.execute(query_e, tuple(query_params))
+                results["events"] = [dict(row) for row in cur.fetchall()]
+
+                count_q = f"SELECT COUNT(*) as cnt FROM log_events{where}"
+                cur.execute(count_q, tuple(params))
+                row = cur.fetchone()
+                results["total"] += row['cnt'] if USE_POSTGRESQL else row[0]
+        except Exception:
+            pass
+
+        # Full-text search across all tables
+        if query:
+            q_lower = query.lower()
+            results["detections"] = [d for d in results["detections"] if any(
+                q_lower in str(d.get(k, "")).lower()
+                for k in ("threat_type", "source_ip", "dest_ip", "description", "severity", "mitre_technique", "mitre_tactic")
+            )]
+            results["alerts"] = [a for a in results["alerts"] if any(
+                q_lower in str(a.get(k, "")).lower()
+                for k in ("alert_type", "title", "description", "source_ip", "severity", "mitre_technique")
+            )]
+            results["events"] = [e for e in results["events"] if any(
+                q_lower in str(e.get(k, "")).lower()
+                for k in ("event_type", "source_ip", "dest_ip", "hostname", "message", "source")
+            )]
+
+        # Build timeline from all results
+        timeline = []
+        for d in results["detections"][:100]:
+            timeline.append({
+                "timestamp": d.get("timestamp", d.get("created_at", d.get("detection_time", ""))),
+                "type": "detection",
+                "title": d.get("threat_type", "Unknown"),
+                "severity": d.get("severity", "LOW"),
+                "source_ip": d.get("source_ip", ""),
+                "description": d.get("description", ""),
+            })
+        for a in results["alerts"][:100]:
+            timeline.append({
+                "timestamp": a.get("created_at", ""),
+                "type": "alert",
+                "title": a.get("title", "Unknown"),
+                "severity": a.get("severity", "LOW"),
+                "source_ip": a.get("source_ip", ""),
+                "description": a.get("description", ""),
+            })
+        for e in results["events"][:100]:
+            timeline.append({
+                "timestamp": e.get("timestamp", ""),
+                "type": "event",
+                "title": e.get("event_type", "Unknown"),
+                "severity": e.get("severity", "INFO"),
+                "source_ip": e.get("source_ip", ""),
+                "description": e.get("message", ""),
+            })
+        timeline.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        results["timeline"] = timeline[:200]
+
+        # Field stats
+        sev_counts = {}
+        type_counts = {}
+        ip_counts = {}
+        for d in results["detections"]:
+            sev = d.get("severity", "UNKNOWN")
+            sev_counts[sev] = sev_counts.get(sev, 0) + 1
+            tt = d.get("threat_type", "unknown")
+            type_counts[tt] = type_counts.get(tt, 0) + 1
+            sip = d.get("source_ip", "")
+            if sip:
+                ip_counts[sip] = ip_counts.get(sip, 0) + 1
+        for a in results["alerts"]:
+            sev = a.get("severity", "UNKNOWN")
+            sev_counts[sev] = sev_counts.get(sev, 0) + 1
+            at = a.get("alert_type", "unknown")
+            type_counts[at] = type_counts.get(at, 0) + 1
+            sip = a.get("source_ip", "")
+            if sip:
+                ip_counts[sip] = ip_counts.get(sip, 0) + 1
+
+        results["field_stats"] = {
+            "by_severity": sev_counts,
+            "by_type": type_counts,
+            "top_source_ips": sorted([{"ip": k, "count": v} for k, v in ip_counts.items()],
+                                     key=lambda x: x["count"], reverse=True)[:20],
+        }
+
+        return results
+
+    def save_hunt_search(self, user_id: str, name: str, query: str, filters: List[Dict]) -> str:
+        """Save a threat hunt search for reuse."""
+        search_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute(
+                    "INSERT INTO hunt_saved_searches (id, user_id, name, query_text, filters_json, created_at) VALUES (%s,%s,%s,%s,%s,%s)",
+                    (search_id, user_id, name, query, json.dumps(filters), now)
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO hunt_saved_searches (id, user_id, name, query_text, filters_json, created_at) VALUES (?,?,?,?,?,?)",
+                    (search_id, user_id, name, query, json.dumps(filters), now)
+                )
+        return search_id
+
+    def get_hunt_searches(self, user_id: str, limit: int = 50) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM hunt_saved_searches WHERE user_id = %s ORDER BY created_at DESC LIMIT %s", (user_id, limit))
+            else:
+                cur.execute("SELECT * FROM hunt_saved_searches WHERE user_id = ? ORDER BY created_at DESC LIMIT ?", (user_id, limit))
+            return [dict(row) for row in cur.fetchall()]
+
+    def delete_hunt_search(self, search_id: str, user_id: str):
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("DELETE FROM hunt_saved_searches WHERE id = %s AND user_id = %s", (search_id, user_id))
+            else:
+                cur.execute("DELETE FROM hunt_saved_searches WHERE id = ? AND user_id = ?", (search_id, user_id))
+
+    def bookmark_event(self, user_id: str, event_type: str, event_id: str, note: str = "") -> str:
+        """Bookmark an event for later review."""
+        bookmark_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute(
+                    "INSERT INTO event_bookmarks (id, user_id, event_type, event_id, note, created_at) VALUES (%s,%s,%s,%s,%s,%s)",
+                    (bookmark_id, user_id, event_type, event_id, note, now)
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO event_bookmarks (id, user_id, event_type, event_id, note, created_at) VALUES (?,?,?,?,?,?)",
+                    (bookmark_id, user_id, event_type, event_id, note, now)
+                )
+        return bookmark_id
+
+    def get_bookmarks(self, user_id: str, limit: int = 100) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM event_bookmarks WHERE user_id = %s ORDER BY created_at DESC LIMIT %s", (user_id, limit))
+            else:
+                cur.execute("SELECT * FROM event_bookmarks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?", (user_id, limit))
+            return [dict(row) for row in cur.fetchall()]
+
+    def remove_bookmark(self, bookmark_id: str, user_id: str):
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("DELETE FROM event_bookmarks WHERE id = %s AND user_id = %s", (bookmark_id, user_id))
+            else:
+                cur.execute("DELETE FROM event_bookmarks WHERE id = ? AND user_id = ?", (bookmark_id, user_id))
 
     def close(self):
         if self.conn:

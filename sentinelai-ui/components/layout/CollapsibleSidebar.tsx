@@ -35,6 +35,7 @@ import {
   Scale,
   Lock,
   Eye,
+  Package,
 } from 'lucide-react';
 import { useGlobalStore } from '@/stores/globalStore';
 import { useSystemStore } from '@/stores/systemStore';
@@ -50,6 +51,7 @@ const primaryNav = [
 
 const secondaryNav = [
   { id: 'copilot', label: 'AI Copilot', icon: MessageCircle },
+  { id: 'event-explorer', label: 'Event Explorer', icon: Search },
   { id: 'threat-hunt', label: 'Threat Hunt', icon: Search },
   { id: 'security-metrics', label: 'Security Metrics', icon: BarChart3 },
   { id: 'pipeline-visualizer', label: 'Pipeline', icon: Activity },
@@ -76,6 +78,7 @@ const secondaryNav = [
 
 const govNav = [
   { id: 'sigma-rules', label: 'Sigma Rules', icon: FileCode },
+  { id: 'rule-packs', label: 'Rule Packs', icon: Package },
   { id: 'threat-feeds', label: 'Threat Feeds', icon: Radio },
   { id: 'network-analysis', label: 'Network Analysis', icon: Wifi },
   { id: 'playbooks', label: 'SOAR Playbooks', icon: PlayCircle },

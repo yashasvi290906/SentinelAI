@@ -10,3 +10,4 @@ aiofiles==24.1.0
 psycopg2-binary==2.9.9
 numpy>=1.24.0
 pyyaml>=6.0
+fpdf2>=2.7.0

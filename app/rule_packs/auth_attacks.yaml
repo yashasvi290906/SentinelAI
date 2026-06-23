@@ -1,0 +1,161 @@
+# SentinelAI Built-in Rule Pack: Authentication Attacks
+# Covers brute force, credential stuffing, password spraying, and account manipulation
+
+pack:
+  id: "auth-attacks-v1"
+  name: "Authentication Attacks"
+  description: "Detects brute force, credential stuffing, password spraying, and account manipulation attacks"
+  version: "1.0"
+  author: "SentinelAI"
+  enabled: true
+
+rules:
+  - id: "brute-force-ssh"
+    name: "SSH Brute Force Attempt"
+    description: "Multiple failed SSH login attempts from the same source"
+    severity: "HIGH"
+    mitre_technique: "T1110"
+    mitre_tactic: "Credential Access"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "failed_logon"
+    aggregation:
+      field: "source_ip"
+      threshold: 5
+      window_minutes: 10
+    actions:
+      - type: "alert"
+        title: "SSH Brute Force from {source_ip}"
+        description: "{count} failed login attempts in {window} minutes from {source_ip}"
+      - type: "block_ip"
+        ip_field: "source_ip"
+        duration_minutes: 30
+
+  - id: "brute-force-rdp"
+    name: "RDP Brute Force Attempt"
+    description: "Multiple failed RDP login attempts"
+    severity: "HIGH"
+    mitre_technique: "T1110"
+    mitre_tactic: "Credential Access"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "failed_logon"
+    filter:
+      field: "dest_port"
+      op: "equals"
+      value: "3389"
+    aggregation:
+      field: "source_ip"
+      threshold: 3
+      window_minutes: 5
+    actions:
+      - type: "alert"
+        title: "RDP Brute Force from {source_ip}"
+
+  - id: "credential-stuffing"
+    name: "Credential Stuffing Attack"
+    description: "Multiple failed logins across different user accounts from the same source"
+    severity: "CRITICAL"
+    mitre_technique: "T1110.004"
+    mitre_tactic: "Credential Access"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "failed_logon"
+    aggregation:
+      field: "source_ip"
+      distinct_field: "target_username"
+      threshold: 10
+      window_minutes: 15
+    actions:
+      - type: "alert"
+        title: "Credential Stuffing from {source_ip}"
+        description: "{distinct_count} different accounts targeted in {window} minutes"
+
+  - id: "password-spray"
+    name: "Password Spray Attack"
+    description: "Same password tried against multiple accounts"
+    severity: "HIGH"
+    mitre_technique: "T1110.003"
+    mitre_tactic: "Credential Access"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "failed_logon"
+    aggregation:
+      field: "source_ip"
+      distinct_field: "target_username"
+      threshold: 5
+      window_minutes: 30
+    actions:
+      - type: "alert"
+        title: "Password Spray from {source_ip}"
+
+  - id: "account-lockout"
+    name: "Account Lockout"
+    description: "User account has been locked due to failed attempts"
+    severity: "MEDIUM"
+    mitre_technique: "T1110"
+    mitre_tactic: "Credential Access"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "account_lockout"
+    actions:
+      - type: "alert"
+        title: "Account Locked: {target_username}"
+        severity: "MEDIUM"
+
+  - id: "successful-logon-new-ip"
+    name: "Logon from New IP"
+    description: "Successful login from a previously unseen IP address"
+    severity: "LOW"
+    mitre_technique: "T1078"
+    mitre_tactic: "Initial Access"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "successful_logon"
+    anomaly: true
+    actions:
+      - type: "alert"
+        title: "Logon from New IP: {source_ip}"
+        severity: "LOW"
+        description: "First seen IP for user {target_username}"
+
+  - id: "logon-after-hours"
+    name: "After Hours Logon"
+    description: "Successful login outside business hours"
+    severity: "MEDIUM"
+    mitre_technique: "T1078"
+    mitre_tactic: "Initial Access"
+    condition:
+      field: "event_type"
+      op: "equals"
+      value: "successful_logon"
+    time_filter:
+      outside_hours: true
+      start_hour: 8
+      end_hour: 18
+      timezone: "UTC"
+    actions:
+      - type: "alert"
+        title: "After Hours Logon: {target_username}"
+        severity: "MEDIUM"
+
+  - id: "admin-logon-anomaly"
+    name: "Admin Account Anomaly"
+    description: "Administrative account used from unusual location or time"
+    severity: "HIGH"
+    mitre_technique: "T1078.001"
+    mitre_tactic: "Privilege Escalation"
+    condition:
+      field: "target_username"
+      op: "in"
+      value: "Administrator,admin,root,sysadmin"
+    actions:
+      - type: "alert"
+        title: "Admin Account Activity: {target_username}"
+        severity: "HIGH"

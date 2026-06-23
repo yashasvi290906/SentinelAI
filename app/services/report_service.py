@@ -290,7 +290,69 @@ class ReportGenerator:
             writer.writerow(det)
         
         return output.getvalue()
-    
+
+    def export_pdf(self, report_data: Dict, title: str = "SentinelAI Report") -> bytes:
+        """Generate PDF report from report data."""
+        from fpdf import FPDF
+
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
+
+        # Title
+        pdf.set_font("Helvetica", "B", 18)
+        pdf.cell(0, 12, title, ln=True, align="C")
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(0, 8, f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", ln=True, align="C")
+        pdf.ln(10)
+
+        # Sections
+        sections = report_data.get("sections", [])
+        if not sections and isinstance(report_data, dict):
+            sections = [{"title": k, "content": v} for k, v in report_data.items() if k not in ("type", "title", "generated_at")]
+
+        for section in sections:
+            if isinstance(section, dict):
+                sec_title = section.get("title", "Section")
+                content = section.get("content", "")
+            else:
+                sec_title = getattr(section, "title", "Section")
+                content = getattr(section, "content", "")
+
+            pdf.set_font("Helvetica", "B", 14)
+            pdf.set_fill_color(240, 240, 240)
+            pdf.cell(0, 10, sec_title, ln=True, fill=True)
+            pdf.ln(3)
+
+            pdf.set_font("Helvetica", "", 10)
+
+            if isinstance(content, dict):
+                for key, value in content.items():
+                    if isinstance(value, (list, dict)):
+                        pdf.set_font("Helvetica", "B", 10)
+                        pdf.cell(60, 7, f"{key}:", ln=False)
+                        pdf.set_font("Helvetica", "", 10)
+                        pdf.cell(0, 7, str(value)[:200], ln=True)
+                    else:
+                        pdf.set_font("Helvetica", "B", 10)
+                        pdf.cell(60, 7, f"{key}:", ln=False)
+                        pdf.set_font("Helvetica", "", 10)
+                        pdf.cell(0, 7, str(value)[:200], ln=True)
+                pdf.ln(3)
+            elif isinstance(content, list):
+                for item in content[:20]:
+                    if isinstance(item, dict):
+                        pdf.set_font("Helvetica", "", 9)
+                        line = " | ".join(f"{k}: {str(v)[:50]}" for k, v in list(item.items())[:5])
+                        pdf.multi_cell(0, 5, f"- {line}")
+                    else:
+                        pdf.cell(0, 5, f"- {str(item)[:150]}", ln=True)
+                pdf.ln(3)
+            else:
+                pdf.multi_cell(0, 6, str(content)[:2000])
+                pdf.ln(3)
+
+        return pdf.output()
     def _calculate_risk_score(self, detections: List[Dict], anomalies: Dict) -> int:
         """Calculate overall risk score 0-100."""
         if not detections:

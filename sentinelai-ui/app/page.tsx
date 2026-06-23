@@ -49,6 +49,8 @@ const Playbooks = dynamic(() => import("@/modules/playbooks"), { loading: () => 
 const Forensics = dynamic(() => import("@/modules/forensics"), { loading: () => <LoadingSkeleton /> });
 const Compliance = dynamic(() => import("@/modules/compliance"), { loading: () => <LoadingSkeleton /> });
 const InsiderThreat = dynamic(() => import("@/modules/insider-threat"), { loading: () => <LoadingSkeleton /> });
+const EventExplorer = dynamic(() => import("@/modules/event-explorer"), { loading: () => <LoadingSkeleton /> });
+const RulePacks = dynamic(() => import("@/modules/rule-packs"), { loading: () => <LoadingSkeleton /> });
 
 const MODULE_MAP: Record<string, { component: React.ComponentType; label: string }> = {
   dashboard: { component: Dashboard, label: "Dashboard" },
@@ -87,6 +89,8 @@ const MODULE_MAP: Record<string, { component: React.ComponentType; label: string
   forensics: { component: Forensics, label: "Forensics" },
   compliance: { component: Compliance, label: "NIST Compliance" },
   "insider-threat": { component: InsiderThreat, label: "Insider Threat" },
+  "event-explorer": { component: EventExplorer, label: "Event Explorer" },
+  "rule-packs": { component: RulePacks, label: "Rule Packs" },
   about: { component: About, label: "About" },
 };
 
