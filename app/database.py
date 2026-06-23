@@ -71,6 +71,23 @@ class DatabaseManager:
                 self.conn.rollback()
                 raise
 
+    def execute(self, query: str, params=None):
+        with self._cursor() as cur:
+            cur.execute(query, params or ())
+            return cur.rowcount
+
+    def fetch_one(self, query: str, params=None):
+        with self._cursor() as cur:
+            cur.execute(query, params or ())
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def fetch_all(self, query: str, params=None):
+        with self._cursor() as cur:
+            cur.execute(query, params or ())
+            rows = cur.fetchall()
+            return [dict(r) for r in rows] if rows else []
+
     def _create_tables_sqlite(self):
         with self._cursor() as cur:
             cur.executescript("""

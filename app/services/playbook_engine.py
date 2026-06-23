@@ -133,7 +133,7 @@ class PlaybookRunner:
             "error_log": [],
         }
 
-        await db.execute(
+        db.execute(
             """INSERT INTO playbook_executions
                (id, playbook_id, playbook_name, trigger_data, status, context, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -317,7 +317,7 @@ class PlaybookRunner:
 
     async def _wait_for_approval_completion(self, approval_id: str):
         while True:
-            result = await db.fetch_one(
+            result = db.fetch_one(
                 "SELECT status FROM playbook_action_log WHERE id = ?", (approval_id,)
             )
             if result and result["status"] in ("approved", "rejected"):
@@ -494,7 +494,7 @@ class PlaybookRunner:
 
     async def _update_execution(self, execution_id: str, context: Dict[str, Any]):
         try:
-            await db.execute(
+            db.execute(
                 """UPDATE playbook_executions
                    SET status = ?, context = ?, updated_at = ?
                    WHERE id = ?""",
@@ -507,7 +507,7 @@ class PlaybookRunner:
     async def _log_action(self, execution_id: str, step_id: str, step_name: str, action_type: str, result: Dict[str, Any]):
         try:
             log_id = str(uuid.uuid4())
-            await db.execute(
+            db.execute(
                 """INSERT INTO playbook_action_log
                    (id, execution_id, step_id, step_name, action_type, result, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -551,7 +551,7 @@ class ActionRegistry:
     async def _firewall_block_ip(self, ip_address: str, duration: str = "24h", reason: str = "", **kwargs) -> Dict[str, Any]:
         rule_id = str(uuid.uuid4())[:12]
         logger.info(f"Firewall: Blocking IP {ip_address} for {duration}. Rule ID: {rule_id}")
-        await db.execute(
+        db.execute(
             """INSERT INTO playbook_action_log (id, execution_id, step_id, step_name, action_type, result, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (rule_id, kwargs.get("execution_id", ""), "firewall", "firewall.block_ip",
@@ -1126,7 +1126,7 @@ class PlaybookEngine:
 
     async def get_execution_status(self, execution_id: str) -> Optional[Dict[str, Any]]:
         try:
-            result = await db.fetch_one(
+            result = db.fetch_one(
                 "SELECT * FROM playbook_executions WHERE id = ?", (execution_id,)
             )
             if result:
@@ -1138,7 +1138,7 @@ class PlaybookEngine:
 
     async def get_execution_logs(self, execution_id: str) -> List[Dict[str, Any]]:
         try:
-            results = await db.fetch_all(
+            results = db.fetch_all(
                 "SELECT * FROM playbook_action_log WHERE execution_id = ? ORDER BY created_at",
                 (execution_id,),
             )

@@ -108,10 +108,9 @@ def register_user(email: str, password: str, name: str) -> dict | None:
     existing = db.get_user_by_email(email)
     if existing:
         return None
-    user_id = str(uuid.uuid4())
     hashed = hash_password(password)
-    success = db.create_user(user_id, email, hashed, name)
-    if not success:
+    result = db.create_user(email, hashed, name)
+    if not result:
         return None
     log_audit(email, "register", f"New user registered: {email}")
     return {

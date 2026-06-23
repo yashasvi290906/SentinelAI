@@ -3847,7 +3847,7 @@ async def get_playbook_executions(playbook_id: str = None, limit: int = 50):
             params.append(playbook_id)
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        results = await db.fetch_all(query, tuple(params))
+        results = db.fetch_all(query, tuple(params))
         executions = [dict(r) for r in results] if results else []
         return {"executions": executions, "total": len(executions)}
     except Exception as e:
@@ -3919,7 +3919,7 @@ async def get_evidence(incident_id: str = None, limit: int = 50):
     """List evidence items."""
     try:
         with db._cursor() as cur:
-            is_pg = hasattr(db, '_init_postgresql')
+            is_pg = getattr(db, 'use_postgresql', False)
             if incident_id:
                 if is_pg:
                     cur.execute(
@@ -4068,7 +4068,7 @@ async def get_compliance_assessments(limit: int = 10):
     """Get assessment history."""
     try:
         with db._cursor() as cur:
-            is_pg = hasattr(db, '_init_postgresql')
+            is_pg = getattr(db, 'use_postgresql', False)
             if is_pg:
                 cur.execute(
                     "SELECT assessment_id, score, total_controls, compliant_count, non_compliant_count, created_at "
@@ -4144,7 +4144,7 @@ async def get_user_baselines(user_id: str = None):
             return {"user_id": user_id, "baselines": baselines}
 
         with db._cursor() as cur:
-            is_pg = hasattr(db, '_init_postgresql')
+            is_pg = getattr(db, 'use_postgresql', False)
             if is_pg:
                 cur.execute("SELECT DISTINCT user_id FROM user_behavior_baselines")
             else:
@@ -4174,7 +4174,7 @@ async def get_user_anomalies(user_id: str = None, severity: str = None, limit: i
             return {"user_id": user_id, "anomalies": anomalies, "count": len(anomalies)}
 
         with db._cursor() as cur:
-            is_pg = hasattr(db, '_init_postgresql')
+            is_pg = getattr(db, 'use_postgresql', False)
             if is_pg:
                 if severity:
                     cur.execute(
@@ -4274,7 +4274,7 @@ async def update_insider_case(case_id: str, data: dict):
             return {"status": "closed", "case_id": case_id}
 
         with db._cursor() as cur:
-            is_pg = hasattr(db, '_init_postgresql')
+            is_pg = getattr(db, 'use_postgresql', False)
             updates = []
             params = []
 
