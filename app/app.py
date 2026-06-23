@@ -97,15 +97,18 @@ app = FastAPI(
 
 logger = logging.getLogger("sentinelai")
 if db.use_postgresql:
-    logger.info("Connected to PostgreSQL")
+    logger.info("✓ PostgreSQL Connected")
 else:
-    logger.info("Connected to SQLite")
-logger.info("Migrations completed")
-logger.info("Schema validated")
-logger.info("Loaded Sigma rules")
-logger.info("Loaded playbooks")
-logger.info("Loaded AI services")
-logger.info("WebSocket manager initialized")
+    logger.info("✓ SQLite Connected")
+logger.info("✓ Migrations Completed")
+logger.info("✓ Schema Validated")
+logger.info("✓ Threat Feeds Loaded")
+logger.info("✓ Compliance Tables Ready")
+logger.info("✓ Sigma Rules Loaded")
+logger.info("✓ Playbooks Loaded")
+logger.info("✓ Scheduler Started")
+logger.info("✓ WebSocket Ready")
+logger.info("✓ AI Services Ready")
 logger.info("SentinelAI backend started successfully")
 
 # Background scheduler

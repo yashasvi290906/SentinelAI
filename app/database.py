@@ -1522,6 +1522,18 @@ class DatabaseManager:
                 except Exception:
                     pass
 
+            # Fix existing NULL feed_type rows
+            try:
+                cur.execute("UPDATE threat_feeds SET feed_type = 'intel' WHERE feed_type IS NULL")
+            except Exception:
+                pass
+
+            # Ensure unique constraint on threat_feeds.name for idempotent upserts
+            try:
+                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_threat_feeds_name ON threat_feeds(name)")
+            except Exception:
+                pass
+
     def create_user(self, email: str, password_hash: str, name: str, role: str = 'analyst') -> Dict[str, Any]:
         user_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()

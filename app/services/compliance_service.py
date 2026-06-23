@@ -666,6 +666,13 @@ class ComplianceService:
                     except Exception:
                         pass  # Column already exists
 
+                # Ensure UNIQUE constraint on control_id for ON CONFLICT
+                if is_pg:
+                    try:
+                        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_nist_controls_control_id ON nist_controls(control_id)")
+                    except Exception:
+                        pass
+
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS compliance_assessments (
                         id TEXT PRIMARY KEY,
@@ -697,7 +704,7 @@ class ComplianceService:
 
             logger.info("Compliance tables initialized successfully.")
         except Exception as e:
-            logger.error(f"Failed to initialize compliance tables: {e}")
+            logger.error(f"Failed to initialize compliance tables: {e}", exc_info=True)
 
     def _collect_system_state(self) -> Dict[str, Any]:
         """Collect current system state for compliance assessment."""

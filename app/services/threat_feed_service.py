@@ -43,6 +43,7 @@ class FeedConfig:
     collection_id: str = ""
     description: str = ""
     tlp: str = "white"
+    feed_type: str = "intel"
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +58,7 @@ DEFAULT_FEEDS: List[FeedConfig] = [
         description="MITRE ATT&CK STIX objects from the official TAXII server",
         poll_interval_seconds=7200,
         tlp="white",
+        feed_type="taxii",
     ),
     FeedConfig(
         name="MITRE ATT&CK STIX",
@@ -66,6 +68,7 @@ DEFAULT_FEEDS: List[FeedConfig] = [
         description="ATT&CK Enterprise STIX data",
         poll_interval_seconds=14400,
         tlp="white",
+        feed_type="taxii",
     ),
     FeedConfig(
         name="Abuse.ch URLhaus",
@@ -75,6 +78,7 @@ DEFAULT_FEEDS: List[FeedConfig] = [
         description="Abuse.ch URLhaus malicious URL feed",
         poll_interval_seconds=1800,
         tlp="white",
+        feed_type="intel",
     ),
 ]
 
@@ -381,6 +385,7 @@ def _init_feed_tables():
             CREATE TABLE IF NOT EXISTS threat_feeds (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
+                feed_type TEXT NOT NULL DEFAULT 'intel',
                 url TEXT NOT NULL,
                 auth_type TEXT DEFAULT 'none',
                 collection_id TEXT DEFAULT '',
@@ -398,6 +403,16 @@ def _init_feed_tables():
                 updated_at TEXT
             )
         """)
+        # Add feed_type column to existing tables if missing
+        try:
+            cur.execute("ALTER TABLE threat_feeds ADD COLUMN feed_type TEXT NOT NULL DEFAULT 'intel'")
+        except Exception:
+            pass
+        # Fix NULL feed_type values
+        try:
+            cur.execute("UPDATE threat_feeds SET feed_type = 'intel' WHERE feed_type IS NULL")
+        except Exception:
+            pass
         cur.execute("""
             CREATE TABLE IF NOT EXISTS stix_objects (
                 id TEXT PRIMARY KEY,
@@ -459,17 +474,17 @@ def _upsert_feed(feed_cfg: FeedConfig) -> str:
         if existing:
             feed_id = existing[0] if not isinstance(existing, dict) else existing["id"]
             cur.execute(
-                "UPDATE threat_feeds SET url=?, auth_type=?, collection_id=?, description=?, "
+                "UPDATE threat_feeds SET url=?, feed_type=?, auth_type=?, collection_id=?, description=?, "
                 "poll_interval_seconds=?, enabled=?, tlp=?, updated_at=? WHERE id=?",
-                (feed_cfg.url, feed_cfg.auth_type, feed_cfg.collection_id,
+                (feed_cfg.url, feed_cfg.feed_type, feed_cfg.auth_type, feed_cfg.collection_id,
                  feed_cfg.description, feed_cfg.poll_interval_seconds,
                  1 if feed_cfg.enabled else 0, feed_cfg.tlp, now, feed_id),
             )
         else:
             cur.execute(
-                "INSERT INTO threat_feeds (id, name, url, auth_type, collection_id, description, "
-                "poll_interval_seconds, enabled, tlp, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (feed_id, feed_cfg.name, feed_cfg.url, feed_cfg.auth_type,
+                "INSERT INTO threat_feeds (id, name, feed_type, url, auth_type, collection_id, description, "
+                "poll_interval_seconds, enabled, tlp, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (feed_id, feed_cfg.name, feed_cfg.feed_type, feed_cfg.url, feed_cfg.auth_type,
                  feed_cfg.collection_id, feed_cfg.description,
                  feed_cfg.poll_interval_seconds, 1 if feed_cfg.enabled else 0,
                  feed_cfg.tlp, now),
