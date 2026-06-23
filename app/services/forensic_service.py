@@ -25,7 +25,7 @@ class EvidenceCollector:
     def _ensure_tables(self):
         """Create forensic tables if they do not exist."""
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS evidence (
                         id TEXT PRIMARY KEY,
@@ -142,7 +142,7 @@ class EvidenceCollector:
         """Internal method to persist evidence record."""
         now = datetime.now(timezone.utc).isoformat()
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("""
                     INSERT INTO evidence (id, evidence_type, source_type, source_id, description,
                         sha256_hash, file_path, file_size, metadata, collected_at, status)
@@ -161,7 +161,7 @@ class EvidenceCollector:
     def _get_evidence(self, evidence_id: str) -> Optional[Dict]:
         """Retrieve an evidence record by ID."""
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("SELECT * FROM evidence WHERE id = %s", (evidence_id,))
             else:
                 cur.execute("SELECT * FROM evidence WHERE id = ?", (evidence_id,))
@@ -393,7 +393,7 @@ class ChainOfCustody:
     def _get_last_entry(self, evidence_id: str) -> Optional[Dict]:
         """Get the most recent chain entry for an evidence item."""
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("""
                     SELECT * FROM evidence_chain WHERE evidence_id = %s
                     ORDER BY sequence_num DESC LIMIT 1
@@ -409,7 +409,7 @@ class ChainOfCustody:
     def _get_sequence_num(self, evidence_id: str) -> int:
         """Get the next sequence number for an evidence item."""
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("SELECT MAX(sequence_num) as max_seq FROM evidence_chain WHERE evidence_id = %s",
                             (evidence_id,))
             else:
@@ -417,7 +417,7 @@ class ChainOfCustody:
                             (evidence_id,))
             row = cur.fetchone()
             if row:
-                max_seq = row['max_seq'] if hasattr(db, '_init_postgresql') else row[0]
+                max_seq = row['max_seq'] if db.use_postgresql else row[0]
                 return (max_seq or 0) + 1
             return 1
 
@@ -449,7 +449,7 @@ class ChainOfCustody:
         entry_id = str(uuid.uuid4())
 
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("""
                     INSERT INTO evidence_chain (id, evidence_id, sequence_num, action, actor,
                         details, prev_hash, entry_hash, timestamp)
@@ -487,7 +487,7 @@ class ChainOfCustody:
             List of chain entries ordered by sequence number.
         """
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("""
                     SELECT * FROM evidence_chain WHERE evidence_id = %s
                     ORDER BY sequence_num ASC
@@ -595,7 +595,7 @@ class ForensicTimeline:
         now = datetime.now(timezone.utc).isoformat()
 
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("""
                     INSERT INTO forensic_timeline (id, incident_id, event_time, event_type,
                         source, description, evidence_id, metadata, created_at)
@@ -624,7 +624,7 @@ class ForensicTimeline:
             List of timeline events sorted by event_time ascending.
         """
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("""
                     SELECT * FROM forensic_timeline WHERE incident_id = %s
                     ORDER BY event_time ASC

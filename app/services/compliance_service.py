@@ -669,16 +669,14 @@ class ComplianceService:
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS compliance_assessments (
                         id TEXT PRIMARY KEY,
-                        assessment_date TEXT NOT NULL,
-                        framework TEXT DEFAULT 'NIST-800-53',
+                        assessment_id TEXT NOT NULL,
+                        score REAL,
                         total_controls INTEGER,
-                        implemented INTEGER,
-                        partial INTEGER,
-                        not_implemented INTEGER,
-                        not_assessed INTEGER,
-                        compliance_score REAL,
-                        assessed_by TEXT,
-                        notes TEXT,
+                        compliant_count INTEGER,
+                        non_compliant_count INTEGER,
+                        controls_status TEXT DEFAULT '[]',
+                        gaps TEXT DEFAULT '[]',
+                        system_state TEXT DEFAULT '{}',
                         created_at TEXT
                     )
                 """)

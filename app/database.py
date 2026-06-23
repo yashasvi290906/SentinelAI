@@ -25,8 +25,48 @@ DB_PATH = Path(os.environ.get("DATABASE_PATH", Path(__file__).parent / "sentinel
 USE_POSTGRESQL = HAS_POSTGRESQL and DB_URL and DB_URL.startswith("postgres")
 
 
+class _AutoAdaptingCursor:
+    """Wraps a DB cursor to auto-convert SQLite '?' placeholders to PostgreSQL '%s'."""
+
+    def __init__(self, cursor, is_postgresql: bool):
+        self._cur = cursor
+        self._pg = is_postgresql
+
+    def _adapt(self, query: str) -> str:
+        if not self._pg or '?' not in query:
+            return query
+        return query.replace('?', '%s')
+
+    def execute(self, query, params=None):
+        return self._cur.execute(self._adapt(query), params or ())
+
+    def executemany(self, query, params_list):
+        return self._cur.executemany(self._adapt(query), params_list)
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    def fetchmany(self, size=None):
+        return self._cur.fetchmany(size) if size else self._cur.fetchmany()
+
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
+    @property
+    def description(self):
+        return self._cur.description
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+
 class DatabaseManager:
     def __init__(self):
+        global USE_POSTGRESQL
         self.use_postgresql = USE_POSTGRESQL
         if self.use_postgresql:
             try:
@@ -34,6 +74,7 @@ class DatabaseManager:
             except Exception as e:
                 print(f"PostgreSQL connection failed ({e}), falling back to SQLite")
                 self.use_postgresql = False
+                USE_POSTGRESQL = False
                 self._init_sqlite()
         else:
             self._init_sqlite()
@@ -55,7 +96,7 @@ class DatabaseManager:
         if self.use_postgresql:
             cursor = self.conn.cursor()
             try:
-                yield cursor
+                yield _AutoAdaptingCursor(cursor, True)
                 self.conn.commit()
             except Exception:
                 self.conn.rollback()
@@ -65,7 +106,7 @@ class DatabaseManager:
         else:
             cursor = self.conn.cursor()
             try:
-                yield cursor
+                yield _AutoAdaptingCursor(cursor, False)
                 self.conn.commit()
             except Exception:
                 self.conn.rollback()
@@ -994,7 +1035,7 @@ class DatabaseManager:
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                     organization_id UUID REFERENCES organizations(id),
                     hostname VARCHAR(255) NOT NULL,
-                    ip_address INET DEFAULT '',
+                    ip_address TEXT DEFAULT '',
                     os_type VARCHAR(50) DEFAULT 'unknown',
                     agent_version VARCHAR(50) DEFAULT '1.0.0',
                     status VARCHAR(20) DEFAULT 'online',

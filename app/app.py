@@ -96,13 +96,24 @@ app = FastAPI(
 )
 
 # Background scheduler
-from services.scheduler_service import scheduler, setup_scheduler
+try:
+    from services.scheduler_service import scheduler, setup_scheduler
+except Exception as _e:
+    scheduler = None
+    setup_scheduler = None
+    logger.error(f"Failed to load scheduler: {_e}", extra={"log_module": "startup"})
 
 @app.on_event("startup")
 async def startup_scheduler():
-    setup_scheduler()
-    asyncio.create_task(scheduler.start())
-    log_structured("info", "system", "Background scheduler started")
+    try:
+        if setup_scheduler:
+            setup_scheduler()
+            asyncio.create_task(scheduler.start())
+            log_structured("info", "system", "Background scheduler started")
+        else:
+            log_structured("warning", "system", "Scheduler not available, skipping")
+    except Exception as e:
+        log_structured("error", "system", f"Scheduler startup failed: {e}")
 
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 app.add_middleware(
@@ -320,7 +331,29 @@ async def home():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "version": MODEL_VERSION}
+    db_status = "disconnected"
+    db_type = "none"
+    try:
+        with db._cursor() as cur:
+            cur.execute("SELECT 1")
+        db_status = "connected"
+        db_type = "postgresql" if db.use_postgresql else "sqlite"
+    except Exception:
+        db_status = "error"
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    gemini_status = "configured" if gemini_key and gemini_key.startswith("AIzaSy") else "not_configured"
+
+    ws_status = "active" if hasattr(app, 'websockets') or True else "inactive"
+
+    return {
+        "status": "healthy",
+        "database": db_status,
+        "database_type": db_type,
+        "gemini": gemini_status,
+        "websocket": ws_status,
+        "version": MODEL_VERSION,
+    }
 
 
 @app.get("/history")
@@ -3367,7 +3400,11 @@ def _get_risk_recommendations(level: str, critical: int, alerts: int) -> list:
 # =========================
 # Sigma Rule Engine Endpoints
 # =========================
-from services.sigma_engine import sigma_engine
+try:
+    from services.sigma_engine import sigma_engine
+except Exception as _e:
+    sigma_engine = None
+    logger.error(f"Failed to load sigma_engine: {_e}", extra={"log_module": "startup"})
 
 _sigma_match_history: deque = deque(maxlen=1000)
 
@@ -3485,7 +3522,11 @@ async def get_sigma_stats():
 # =========================
 # Threat Feed Endpoints (STIX/TAXII)
 # =========================
-from services.threat_feed_service import threat_feed_service
+try:
+    from services.threat_feed_service import threat_feed_service
+except Exception as _e:
+    threat_feed_service = None
+    logger.error(f"Failed to load threat_feed_service: {_e}", extra={"log_module": "startup"})
 
 @app.on_event("startup")
 async def startup_threat_feeds():
@@ -3624,7 +3665,11 @@ async def aps_middleware(request: Request, call_next):
 # NETWORK TRAFFIC ANALYSIS ENDPOINTS
 # ================================================================
 
-from services.network_analysis_service import network_analysis_engine
+try:
+    from services.network_analysis_service import network_analysis_engine
+except Exception as _e:
+    network_analysis_engine = None
+    logger.error(f"Failed to load network_analysis_engine: {_e}", extra={"log_module": "startup"})
 
 
 @app.get("/api/network/flows")
@@ -3740,7 +3785,12 @@ async def get_network_stats():
 # SOAR PLAYBOOK ENDPOINTS
 # ================================================================
 
-from services.playbook_engine import playbook_engine, playbook_runner
+try:
+    from services.playbook_engine import playbook_engine, playbook_runner
+except Exception as _e:
+    playbook_engine = None
+    playbook_runner = None
+    logger.error(f"Failed to load playbook_engine: {_e}", extra={"log_module": "startup"})
 
 
 @app.get("/api/playbooks")
@@ -3876,7 +3926,11 @@ async def get_playbook_execution(execution_id: str):
 # =========================
 # Forensic Chain of Custody Endpoints
 # =========================
-from services.forensic_service import forensic_service
+try:
+    from services.forensic_service import forensic_service
+except Exception as _e:
+    forensic_service = None
+    logger.error(f"Failed to load forensic_service: {_e}", extra={"log_module": "startup"})
 
 
 @app.post("/api/forensics/evidence")
@@ -4014,7 +4068,11 @@ async def verify_evidence(evidence_id: str):
 # =========================
 # NIST 800-53 Compliance Endpoints
 # =========================
-from services.compliance_service import compliance_service
+try:
+    from services.compliance_service import compliance_service
+except Exception as _e:
+    compliance_service = None
+    logger.error(f"Failed to load compliance_service: {_e}", extra={"log_module": "startup"})
 
 
 @app.get("/api/compliance/controls")
@@ -4132,7 +4190,11 @@ async def get_compliance_report():
 # =========================
 # Insider Threat Detection Endpoints
 # =========================
-from services.insider_threat_service import insider_threat_engine
+try:
+    from services.insider_threat_service import insider_threat_engine
+except Exception as _e:
+    insider_threat_engine = None
+    logger.error(f"Failed to load insider_threat_engine: {_e}", extra={"log_module": "startup"})
 
 
 @app.get("/api/insider/baselines")

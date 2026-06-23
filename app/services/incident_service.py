@@ -16,7 +16,7 @@ class IncidentService:
         now = datetime.now(timezone.utc).isoformat()
 
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("""
                     INSERT INTO incidents (id, title, severity, status, confidence, description,
                         alert_ids, timeline, affected_ips, mitre_techniques, mitre_tactics,
@@ -62,14 +62,14 @@ class IncidentService:
             conditions = []
             params = []
             if status:
-                conditions.append("status = ?" if not hasattr(db, '_init_postgresql') else "status = %s")
+                conditions.append("status = ?" if not db.use_postgresql else "status = %s")
                 params.append(status)
             if severity:
-                conditions.append("severity = ?" if not hasattr(db, '_init_postgresql') else "severity = %s")
+                conditions.append("severity = ?" if not db.use_postgresql else "severity = %s")
                 params.append(severity)
 
             where = " WHERE " + " AND ".join(conditions) if conditions else ""
-            limit_q = "?" if not hasattr(db, '_init_postgresql') else "%s"
+            limit_q = "?" if not db.use_postgresql else "%s"
             query = f"SELECT * FROM incidents{where} ORDER BY created_at DESC LIMIT {limit_q}"
             params.append(limit)
 
@@ -78,7 +78,7 @@ class IncidentService:
 
     def get_incident(self, db, incident_id: str) -> Optional[Dict]:
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("SELECT * FROM incidents WHERE id = %s", (incident_id,))
             else:
                 cur.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,))
@@ -88,7 +88,7 @@ class IncidentService:
     def update_incident_status(self, db, incident_id: str, status: str, assigned_to: str = None):
         now = datetime.now(timezone.utc).isoformat()
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 if assigned_to:
                     cur.execute("UPDATE incidents SET status=%s, assigned_to=%s, updated_at=%s WHERE id=%s",
                                 (status, assigned_to, now, incident_id))
@@ -107,7 +107,7 @@ class IncidentService:
         note_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("INSERT INTO incident_notes (id, incident_id, user_id, note, created_at) VALUES (%s,%s,%s,%s,%s)",
                             (note_id, incident_id, user_id, note, now))
             else:
@@ -117,7 +117,7 @@ class IncidentService:
 
     def get_incident_notes(self, db, incident_id: str) -> List[Dict]:
         with db._cursor() as cur:
-            if hasattr(db, '_init_postgresql'):
+            if db.use_postgresql:
                 cur.execute("SELECT * FROM incident_notes WHERE incident_id = %s ORDER BY created_at", (incident_id,))
             else:
                 cur.execute("SELECT * FROM incident_notes WHERE incident_id = ? ORDER BY created_at", (incident_id,))
@@ -127,13 +127,13 @@ class IncidentService:
         with db._cursor() as cur:
             cur.execute("SELECT COUNT(*) as total FROM incidents")
             row = cur.fetchone()
-            total = row['total'] if hasattr(db, '_init_postgresql') else row[0]
+            total = row['total'] if db.use_postgresql else row[0]
 
             cur.execute("SELECT severity, COUNT(*) as count FROM incidents GROUP BY severity")
-            by_severity = {row['severity']: row['count'] if hasattr(db, '_init_postgresql') else row[1] for row in cur.fetchall()}
+            by_severity = {row['severity']: row['count'] if db.use_postgresql else row[1] for row in cur.fetchall()}
 
             cur.execute("SELECT status, COUNT(*) as count FROM incidents GROUP BY status")
-            by_status = {row['status']: row['count'] if hasattr(db, '_init_postgresql') else row[1] for row in cur.fetchall()}
+            by_status = {row['status']: row['count'] if db.use_postgresql else row[1] for row in cur.fetchall()}
 
             return {'total': total, 'by_severity': by_severity, 'by_status': by_status}
 
