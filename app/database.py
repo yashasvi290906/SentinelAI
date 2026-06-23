@@ -1634,6 +1634,8 @@ class DatabaseManager:
             for event in events:
                 event_id = str(uuid.uuid4())
                 try:
+                    src_ip = event.get('source_ip', '') or None
+                    dst_ip = event.get('dest_ip', '') or None
                     if USE_POSTGRESQL:
                         cur.execute("""
                             INSERT INTO log_events (id, log_id, timestamp, source_ip, dest_ip, source_port, dest_port,
@@ -1641,7 +1643,7 @@ class DatabaseManager:
                             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         """, (
                             event_id, log_id,
-                            event.get('timestamp', ''), event.get('source_ip', ''), event.get('dest_ip', ''),
+                            event.get('timestamp', ''), src_ip, dst_ip,
                             event.get('source_port', 0), event.get('dest_port', 0),
                             event.get('protocol', ''), event.get('event_type', ''), event.get('severity', 'INFO'),
                             event.get('user', ''), event.get('url', ''), event.get('method', ''),
@@ -1655,7 +1657,7 @@ class DatabaseManager:
                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         """, (
                             event_id, log_id,
-                            event.get('timestamp', ''), event.get('source_ip', ''), event.get('dest_ip', ''),
+                            event.get('timestamp', ''), src_ip or '', dst_ip or '',
                             event.get('source_port', 0), event.get('dest_port', 0),
                             event.get('protocol', ''), event.get('event_type', ''), event.get('severity', 'INFO'),
                             event.get('user', ''), event.get('url', ''), event.get('method', ''),
@@ -1695,6 +1697,8 @@ class DatabaseManager:
             for det in detections:
                 det_id = str(uuid.uuid4())
                 try:
+                    src_ip = det.get('source_ip', '') or None
+                    dst_ip = det.get('dest_ip', '') or None
                     if USE_POSTGRESQL:
                         cur.execute("""
                             INSERT INTO threat_detections (id, log_id, threat_type, severity, confidence, source_ip, dest_ip,
@@ -1702,7 +1706,7 @@ class DatabaseManager:
                             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         """, (
                             det_id, log_id, det.get('threat_type', ''), det.get('severity', 'INFO'),
-                            det.get('confidence', 0.0), det.get('source_ip', ''), det.get('dest_ip', ''),
+                            det.get('confidence', 0.0), src_ip, dst_ip,
                             det.get('dest_port', 0), det.get('description', ''),
                             json.dumps(det.get('evidence', [])), det.get('mitre_technique', ''),
                             det.get('mitre_tactic', ''), det.get('first_seen', ''), det.get('last_seen', ''),
@@ -1715,7 +1719,7 @@ class DatabaseManager:
                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         """, (
                             det_id, log_id, det.get('threat_type', ''), det.get('severity', 'INFO'),
-                            det.get('confidence', 0.0), det.get('source_ip', ''), det.get('dest_ip', ''),
+                            det.get('confidence', 0.0), src_ip or '', dst_ip or '',
                             det.get('dest_port', 0), det.get('description', ''),
                             json.dumps(det.get('evidence', [])), det.get('mitre_technique', ''),
                             det.get('mitre_tactic', ''), det.get('first_seen', ''), det.get('last_seen', ''),
@@ -2057,7 +2061,10 @@ class DatabaseManager:
             row = cur.fetchone()
             critical_threats = row[0] if not USE_POSTGRESQL else list(row.values())[0]
 
-            cur.execute("SELECT COUNT(DISTINCT source_ip) FROM log_events WHERE source_ip != ''")
+            if USE_POSTGRESQL:
+                cur.execute("SELECT COUNT(DISTINCT source_ip::text) FROM log_events WHERE source_ip IS NOT NULL AND source_ip::text != ''")
+            else:
+                cur.execute("SELECT COUNT(DISTINCT source_ip) FROM log_events WHERE source_ip IS NOT NULL AND source_ip != ''")
             row = cur.fetchone()
             unique_ips = row[0] if not USE_POSTGRESQL else list(row.values())[0]
 
@@ -2151,6 +2158,8 @@ class DatabaseManager:
         alert_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         with self._cursor() as cur:
+            pg_src = source_ip or None
+            pg_dst = dest_ip or None
             if USE_POSTGRESQL:
                 cur.execute("""
                     INSERT INTO alerts (id, organization_id, log_id, device_id, alert_type, severity, title, description,
@@ -2158,7 +2167,7 @@ class DatabaseManager:
                         evidence, recommendations, status, created_at)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (alert_id, org_id, log_id, device_id, alert_type, severity, title, description,
-                      source_ip, dest_ip, source_port, dest_port, protocol, mitre_technique, mitre_tactic,
+                      pg_src, pg_dst, source_port, dest_port, protocol, mitre_technique, mitre_tactic,
                       json.dumps(evidence or []), json.dumps(recommendations or []), 'open', now))
             else:
                 cur.execute("""
@@ -2449,9 +2458,9 @@ class DatabaseManager:
         summary = self.get_threat_summary()
         with self._cursor() as cur:
             if USE_POSTGRESQL:
-                cur.execute("SELECT source_ip, COUNT(*) as count FROM threat_detections WHERE source_ip != '' GROUP BY source_ip ORDER BY count DESC LIMIT 10")
+                cur.execute("SELECT source_ip::text as source_ip, COUNT(*) as count FROM threat_detections WHERE source_ip IS NOT NULL AND source_ip::text != '' GROUP BY source_ip ORDER BY count DESC LIMIT 10")
             else:
-                cur.execute("SELECT source_ip, COUNT(*) as count FROM threat_detections WHERE source_ip != '' GROUP BY source_ip ORDER BY count DESC LIMIT 10")
+                cur.execute("SELECT source_ip, COUNT(*) as count FROM threat_detections WHERE source_ip IS NOT NULL AND source_ip != '' GROUP BY source_ip ORDER BY count DESC LIMIT 10")
             top_ips = [{"ip": row['source_ip'], "count": row['count']} for row in cur.fetchall()]
 
         by_severity = summary.get('by_severity', {})

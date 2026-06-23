@@ -113,7 +113,7 @@ export default function NetworkAnalysisModule() {
       setDns(dnsData.queries || []);
       setHttp(httpData.requests || []);
       setAnomalies(anomData.anomalies || []);
-      setStats(statsData);
+      if (statsData && !statsData.error) setStats(statsData);
     } catch {
       console.error('Failed to fetch network data');
     }

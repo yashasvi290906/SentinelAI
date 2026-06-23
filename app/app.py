@@ -3785,9 +3785,25 @@ async def get_network_stats():
     try:
         flow_stats = network_analysis_engine.get_flow_stats()
         anomaly_stats = network_analysis_engine.get_anomaly_stats()
+        dns_count = 0
+        http_count = 0
+        try:
+            with db._cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM dns_queries")
+                row = cur.fetchone()
+                dns_count = row[0] if row else 0
+                cur.execute("SELECT COUNT(*) FROM http_metadata")
+                row = cur.fetchone()
+                http_count = row[0] if row else 0
+        except Exception:
+            pass
         return {
-            "flows": flow_stats,
-            "anomalies": anomaly_stats,
+            "total_flows": flow_stats.get("total_flows", 0),
+            "dns_queries": dns_count,
+            "http_requests": http_count,
+            "anomalies": anomaly_stats.get("total_anomalies", 0),
+            "unique_src_ips": flow_stats.get("unique_src_ips", 0),
+            "unique_dst_ips": flow_stats.get("unique_dst_ips", 0),
         }
     except Exception as e:
         logger.error(f"Failed to fetch network stats: {e}", extra={"log_module": "api", "action": "error"})
@@ -3799,10 +3815,11 @@ async def get_network_stats():
 # ================================================================
 
 try:
-    from services.playbook_engine import playbook_engine, playbook_runner
+    from services.playbook_engine import playbook_engine, playbook_runner, action_registry
 except Exception as _e:
     playbook_engine = None
     playbook_runner = None
+    action_registry = None
     logger.error(f"Failed to load playbook_engine: {_e}", extra={"log_module": "startup"})
 
 
@@ -3811,10 +3828,11 @@ async def get_playbooks():
     """List all playbooks."""
     try:
         playbooks = playbook_engine.list_playbooks(enabled_only=False)
+        actions = action_registry.list_actions() if action_registry else []
         return {
             "playbooks": [pb.model_dump() for pb in playbooks],
             "total": len(playbooks),
-            "available_actions": action_registry.list_actions(),
+            "available_actions": actions,
         }
     except Exception as e:
         logger.error(f"Failed to list playbooks: {e}", extra={"log_module": "api", "action": "error"})

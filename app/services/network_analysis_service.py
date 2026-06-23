@@ -1240,7 +1240,10 @@ class NetworkAnalysisEngine:
                 sev_rows = cur.fetchall()
                 by_severity = {r[0]: r[1] for r in sev_rows}
 
-                cur.execute("SELECT source_ip, COUNT(*) FROM network_anomalies WHERE source_ip != '' GROUP BY source_ip ORDER BY COUNT(*) DESC LIMIT 10")
+                if db.use_postgresql:
+                    cur.execute("SELECT source_ip::text, COUNT(*) FROM network_anomalies WHERE source_ip IS NOT NULL AND source_ip::text != '' GROUP BY source_ip ORDER BY COUNT(*) DESC LIMIT 10")
+                else:
+                    cur.execute("SELECT source_ip, COUNT(*) FROM network_anomalies WHERE source_ip IS NOT NULL AND source_ip != '' GROUP BY source_ip ORDER BY COUNT(*) DESC LIMIT 10")
                 ip_rows = cur.fetchall()
                 top_sources = {r[0]: r[1] for r in ip_rows}
 
