@@ -472,7 +472,7 @@ async def predict(data: SequenceRequest):
             "timestamp": record["timestamp"],
         }
     except Exception as e:
-        logger.error(f"Prediction error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Prediction error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": "Prediction failed. Please try again."})
 
 
@@ -539,7 +539,7 @@ async def compare(data: SequenceRequest):
             "ml_top_predictions": ml_top3,
         }
     except Exception as e:
-        logger.error(f"Comparison error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Comparison error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": "Comparison failed. Please try again."})
 
 
@@ -578,7 +578,7 @@ async def drift(data: SequenceRequest):
         drift_history.appendleft(record)
         return record
     except Exception as e:
-        logger.error(f"Drift detection error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Drift detection error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": "Drift detection failed. Please try again."})
 
 
@@ -1514,7 +1514,7 @@ async def upload_log(file: UploadFile = File(...)):
             "anomaly": anomaly_dict,
         }
     except Exception as e:
-        logger.error(f"Log upload error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Log upload error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Log upload failed: {str(e)}"})
 
 
@@ -1769,7 +1769,7 @@ async def generate_report(data: ReportRequest):
             "report": report,
         }
     except Exception as e:
-        logger.error(f"Report generation error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Report generation error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Report generation failed: {str(e)}"})
 
 
@@ -1831,7 +1831,7 @@ async def intel_lookup(data: IntelLookupRequest):
             "result": result,
         }
     except Exception as e:
-        logger.error(f"Intel lookup error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Intel lookup error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Intel lookup failed: {str(e)}"})
 
 
@@ -2036,7 +2036,7 @@ async def enhanced_copilot(data: CopilotRequest):
             "devices_count": len(devices),
         }
     except Exception as e:
-        logger.error(f"Enhanced copilot error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Enhanced copilot error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": "Copilot failed. Please try again."})
 
 
@@ -3382,7 +3382,7 @@ async def get_sigma_rules(level: str = None, product: str = None):
             rules = [r for r in rules if r.get("logsource", {}).get("product", "").lower() == product.lower()]
         return {"rules": rules, "total": len(rules)}
     except Exception as e:
-        logger.error(f"Sigma rules fetch error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Sigma rules fetch error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch Sigma rules: {str(e)}"})
 
 
@@ -3399,7 +3399,7 @@ async def create_sigma_rule(data: dict):
         log_structured("info", "sigma", f"Sigma rule imported: {rule_id}")
         return {"rule_id": rule_id, "status": "created"}
     except Exception as e:
-        logger.error(f"Sigma rule create error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Sigma rule create error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=400, content={"error": f"Failed to import Sigma rule: {str(e)}"})
 
 
@@ -3440,7 +3440,7 @@ async def import_sigma_rules(data: dict):
         log_structured("info", "sigma", f"Bulk imported {len(imported_ids)} Sigma rules ({len(errors)} errors)")
         return {"imported": len(imported_ids), "errors": errors, "rule_ids": imported_ids}
     except Exception as e:
-        logger.error(f"Sigma bulk import error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Sigma bulk import error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Bulk import failed: {str(e)}"})
 
 
@@ -3455,7 +3455,7 @@ async def delete_sigma_rule(rule_id: str):
         log_structured("info", "sigma", f"Sigma rule deleted: {rule_id}")
         return {"deleted": True, "rule_id": rule_id}
     except Exception as e:
-        logger.error(f"Sigma rule delete error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Sigma rule delete error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to delete Sigma rule: {str(e)}"})
 
 
@@ -3466,7 +3466,7 @@ async def get_sigma_matches(limit: int = 50):
         matches = list(_sigma_match_history)[:limit]
         return {"matches": matches, "total": len(matches)}
     except Exception as e:
-        logger.error(f"Sigma matches fetch error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Sigma matches fetch error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch Sigma matches: {str(e)}"})
 
 
@@ -3478,7 +3478,7 @@ async def get_sigma_stats():
         stats["recent_matches"] = len(_sigma_match_history)
         return stats
     except Exception as e:
-        logger.error(f"Sigma stats error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Sigma stats error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch Sigma stats: {str(e)}"})
 
 
@@ -3494,7 +3494,7 @@ async def startup_threat_feeds():
         await threat_feed_service.start_background_polling(interval_seconds=3600)
         log_structured("info", "system", "Threat feed service started with background polling")
     except Exception as e:
-        logger.error(f"Threat feed startup error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Threat feed startup error: {e}", extra={"log_module": "api", "action": "error"})
 
 
 @app.get("/api/feeds")
@@ -3505,7 +3505,7 @@ async def get_threat_feeds():
         summary = threat_feed_service.get_feed_summary()
         return {"feeds": feeds, "summary": summary}
     except Exception as e:
-        logger.error(f"Feeds fetch error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Feeds fetch error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch feeds: {str(e)}"})
 
 
@@ -3530,7 +3530,7 @@ async def create_threat_feed(data: dict):
         log_structured("info", "feeds", f"Threat feed created: {feed_cfg.name} ({feed_id})")
         return {"feed_id": feed_id, "name": feed_cfg.name, "status": "created"}
     except Exception as e:
-        logger.error(f"Feed create error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Feed create error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to create feed: {str(e)}"})
 
 
@@ -3545,7 +3545,7 @@ async def poll_threat_feed(feed_id: str):
         log_structured("info", "feeds", f"Manual poll of feed {feed.get('name', feed_id)}: {result}")
         return {"feed_id": feed_id, "result": result}
     except Exception as e:
-        logger.error(f"Feed poll error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Feed poll error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to poll feed: {str(e)}"})
 
 
@@ -3556,7 +3556,7 @@ async def get_stix_objects(type: str = None, limit: int = 50):
         objects = threat_feed_service.get_stix_objects(stix_type=type, limit=limit)
         return {"objects": objects, "total": len(objects)}
     except Exception as e:
-        logger.error(f"STIX objects fetch error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"STIX objects fetch error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch STIX objects: {str(e)}"})
 
 
@@ -3568,7 +3568,7 @@ async def get_stix_indicators(indicator_type: str = None, limit: int = 100):
         stats = threat_feed_service.get_indicator_stats()
         return {"indicators": indicators, "total": len(indicators), "stats": stats}
     except Exception as e:
-        logger.error(f"STIX indicators fetch error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"STIX indicators fetch error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch STIX indicators: {str(e)}"})
 
 
@@ -3604,7 +3604,7 @@ async def match_stix_indicator(value: str):
             "match_count": len(matched),
         }
     except Exception as e:
-        logger.error(f"STIX match error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"STIX match error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Indicator match failed: {str(e)}"})
 
 
@@ -3648,7 +3648,7 @@ async def get_network_flows(src_ip: str = None, dst_ip: str = None, limit: int =
             flows = [dict(row) for row in rows]
         return {"flows": flows, "total": len(flows)}
     except Exception as e:
-        logger.error(f"Failed to fetch network flows: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Failed to fetch network flows: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch network flows: {str(e)}"})
 
 
@@ -3670,7 +3670,7 @@ async def get_dns_queries(src_ip: str = None, limit: int = 100):
             queries = [dict(row) for row in rows]
         return {"dns_queries": queries, "total": len(queries)}
     except Exception as e:
-        logger.error(f"Failed to fetch DNS queries: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Failed to fetch DNS queries: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch DNS queries: {str(e)}"})
 
 
@@ -3692,7 +3692,7 @@ async def get_http_metadata(src_ip: str = None, limit: int = 100):
             records = [dict(row) for row in rows]
         return {"http_requests": records, "total": len(records)}
     except Exception as e:
-        logger.error(f"Failed to fetch HTTP metadata: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Failed to fetch HTTP metadata: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch HTTP metadata: {str(e)}"})
 
 
@@ -3717,7 +3717,7 @@ async def get_network_anomalies(anomaly_type: str = None, severity: str = None, 
             anomalies = [dict(row) for row in rows]
         return {"anomalies": anomalies, "total": len(anomalies)}
     except Exception as e:
-        logger.error(f"Failed to fetch network anomalies: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Failed to fetch network anomalies: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch network anomalies: {str(e)}"})
 
 
@@ -3732,7 +3732,7 @@ async def get_network_stats():
             "anomalies": anomaly_stats,
         }
     except Exception as e:
-        logger.error(f"Failed to fetch network stats: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Failed to fetch network stats: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch network stats: {str(e)}"})
 
 
@@ -3754,7 +3754,7 @@ async def get_playbooks():
             "available_actions": action_registry.list_actions(),
         }
     except Exception as e:
-        logger.error(f"Failed to list playbooks: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Failed to list playbooks: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to list playbooks: {str(e)}"})
 
 
@@ -3772,7 +3772,7 @@ async def create_playbook(data: dict):
             "playbook": playbook.model_dump(),
         }
     except Exception as e:
-        logger.error(f"Failed to create playbook: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Failed to create playbook: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to create playbook: {str(e)}"})
 
 
@@ -3795,7 +3795,7 @@ async def update_playbook(playbook_id: str, data: dict):
             "playbook": updated_pb.model_dump(),
         }
     except Exception as e:
-        logger.error(f"Failed to update playbook: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Failed to update playbook: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to update playbook: {str(e)}"})
 
 
@@ -3808,7 +3808,7 @@ async def delete_playbook(playbook_id: str):
             return JSONResponse(status_code=404, content={"error": "Playbook not found"})
         return {"playbook_id": playbook_id, "status": "deleted"}
     except Exception as e:
-        logger.error(f"Failed to delete playbook: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Failed to delete playbook: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to delete playbook: {str(e)}"})
 
 
@@ -3832,7 +3832,7 @@ async def execute_playbook(playbook_id: str, trigger_data: dict = {}):
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
     except Exception as e:
-        logger.error(f"Failed to execute playbook: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Failed to execute playbook: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to execute playbook: {str(e)}"})
 
 
@@ -3851,7 +3851,7 @@ async def get_playbook_executions(playbook_id: str = None, limit: int = 50):
         executions = [dict(r) for r in results] if results else []
         return {"executions": executions, "total": len(executions)}
     except Exception as e:
-        logger.error(f"Failed to fetch playbook executions: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Failed to fetch playbook executions: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch playbook executions: {str(e)}"})
 
 
@@ -3869,7 +3869,7 @@ async def get_playbook_execution(execution_id: str):
             "action_logs": logs,
         }
     except Exception as e:
-        logger.error(f"Failed to fetch execution details: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Failed to fetch execution details: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch execution details: {str(e)}"})
 
 
@@ -3910,7 +3910,7 @@ async def collect_evidence(data: dict):
 
         return {"status": "created", **result}
     except Exception as e:
-        logger.error(f"Evidence collection error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Evidence collection error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Evidence collection failed: {str(e)}"})
 
 
@@ -3952,7 +3952,7 @@ async def get_evidence(incident_id: str = None, limit: int = 50):
             ]
         return {"evidence": items, "count": len(items)}
     except Exception as e:
-        logger.error(f"Evidence list error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Evidence list error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to list evidence: {str(e)}"})
 
 
@@ -3967,7 +3967,7 @@ async def get_evidence_detail(evidence_id: str):
         chain = forensic_service.get_custody_chain(evidence_id)
         return {"evidence": evidence, "chain_of_custody": chain}
     except Exception as e:
-        logger.error(f"Evidence detail error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Evidence detail error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to get evidence: {str(e)}"})
 
 
@@ -3985,7 +3985,7 @@ async def transfer_evidence(evidence_id: str, data: dict):
         result = forensic_service.transfer_custody(evidence_id, from_actor, to_actor, reason)
         return {"status": "transferred", "transfer_entry": result}
     except Exception as e:
-        logger.error(f"Evidence transfer error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Evidence transfer error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Evidence transfer failed: {str(e)}"})
 
 
@@ -3996,7 +3996,7 @@ async def get_forensic_timeline(incident_id: str):
         timeline = forensic_service.get_incident_timeline(incident_id)
         return {"incident_id": incident_id, "timeline": timeline, "count": len(timeline)}
     except Exception as e:
-        logger.error(f"Forensic timeline error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Forensic timeline error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to get timeline: {str(e)}"})
 
 
@@ -4007,7 +4007,7 @@ async def verify_evidence(evidence_id: str):
         result = forensic_service.verify_evidence(evidence_id)
         return result
     except Exception as e:
-        logger.error(f"Evidence verification error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Evidence verification error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Evidence verification failed: {str(e)}"})
 
 
@@ -4026,7 +4026,7 @@ async def get_compliance_controls(family: str = None):
             controls = [c for c in controls if c.get("family", "").upper() == family.upper()]
         return {"controls": controls, "count": len(controls)}
     except Exception as e:
-        logger.error(f"Compliance controls error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Compliance controls error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to get controls: {str(e)}"})
 
 
@@ -4037,7 +4037,7 @@ async def get_compliance_score():
         score = compliance_service.get_score()
         return score
     except Exception as e:
-        logger.error(f"Compliance score error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Compliance score error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to get score: {str(e)}"})
 
 
@@ -4048,7 +4048,7 @@ async def get_compliance_gaps():
         gaps = compliance_service.get_gaps()
         return {"gaps": gaps, "count": len(gaps)}
     except Exception as e:
-        logger.error(f"Compliance gaps error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Compliance gaps error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to get gaps: {str(e)}"})
 
 
@@ -4059,7 +4059,7 @@ async def run_compliance_assessment():
         result = compliance_service.run_assessment()
         return result
     except Exception as e:
-        logger.error(f"Compliance assessment error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Compliance assessment error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Compliance assessment failed: {str(e)}"})
 
 
@@ -4095,7 +4095,7 @@ async def get_compliance_assessments(limit: int = 10):
             ]
         return {"assessments": assessments, "count": len(assessments)}
     except Exception as e:
-        logger.error(f"Compliance assessments error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Compliance assessments error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to get assessments: {str(e)}"})
 
 
@@ -4125,7 +4125,7 @@ async def get_compliance_report():
         }
         return {"report": report}
     except Exception as e:
-        logger.error(f"Compliance report error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Compliance report error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to generate report: {str(e)}"})
 
 
@@ -4159,7 +4159,7 @@ async def get_user_baselines(user_id: str = None):
 
         return {"baselines": all_baselines, "user_count": len(all_baselines)}
     except Exception as e:
-        logger.error(f"Insider baselines error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Insider baselines error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to get baselines: {str(e)}"})
 
 
@@ -4212,7 +4212,7 @@ async def get_user_anomalies(user_id: str = None, severity: str = None, limit: i
             ]
         return {"anomalies": anomalies, "count": len(anomalies)}
     except Exception as e:
-        logger.error(f"Insider anomalies error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Insider anomalies error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to get anomalies: {str(e)}"})
 
 
@@ -4223,7 +4223,7 @@ async def get_insider_risk_scores():
         risk_scores = insider_threat_engine.risk_scorer.get_all_risk_scores()
         return {"risk_scores": risk_scores, "count": len(risk_scores)}
     except Exception as e:
-        logger.error(f"Insider risk scores error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Insider risk scores error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to get risk scores: {str(e)}"})
 
 
@@ -4241,7 +4241,7 @@ async def create_insider_case(data: dict):
         result = insider_threat_engine.create_case(user_id, anomaly_ids, risk_level)
         return {"status": "created", **result}
     except Exception as e:
-        logger.error(f"Insider case creation error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Insider case creation error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to create case: {str(e)}"})
 
 
@@ -4252,7 +4252,7 @@ async def get_insider_cases(status: str = None, limit: int = 50):
         cases = insider_threat_engine.get_cases(status=status, limit=limit)
         return {"cases": cases, "count": len(cases)}
     except Exception as e:
-        logger.error(f"Insider cases error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Insider cases error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to get cases: {str(e)}"})
 
 
@@ -4299,5 +4299,5 @@ async def update_insider_case(case_id: str, data: dict):
         updated_case = insider_threat_engine.get_case(case_id)
         return {"status": "updated", "case": updated_case}
     except Exception as e:
-        logger.error(f"Insider case update error: {e}", extra={"module": "api", "action": "error"})
+        logger.error(f"Insider case update error: {e}", extra={"log_module": "api", "action": "error"})
         return JSONResponse(status_code=500, content={"error": f"Failed to update case: {str(e)}"})

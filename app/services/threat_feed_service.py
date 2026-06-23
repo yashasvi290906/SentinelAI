@@ -377,7 +377,7 @@ def _init_feed_tables():
     """Create threat_feeds, stix_objects, stix_indicators tables."""
     from database import db
     with db._cursor() as cur:
-        cur.executescript("""
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS threat_feeds (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -396,8 +396,9 @@ def _init_feed_tables():
                 error_message TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT
-            );
-
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS stix_objects (
                 id TEXT PRIMARY KEY,
                 feed_id TEXT NOT NULL,
@@ -414,8 +415,9 @@ def _init_feed_tables():
                 raw_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (feed_id) REFERENCES threat_feeds(id)
-            );
-
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS stix_indicators (
                 id TEXT PRIMARY KEY,
                 feed_id TEXT NOT NULL,
@@ -436,16 +438,15 @@ def _init_feed_tables():
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (feed_id) REFERENCES threat_feeds(id),
                 FOREIGN KEY (stix_object_id) REFERENCES stix_objects(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_stix_indicators_value ON stix_indicators(value);
-            CREATE INDEX IF NOT EXISTS idx_stix_indicators_type ON stix_indicators(indicator_type);
-            CREATE INDEX IF NOT EXISTS idx_stix_indicators_feed ON stix_indicators(feed_id);
-            CREATE INDEX IF NOT EXISTS idx_stix_objects_stix_id ON stix_objects(stix_id);
-            CREATE INDEX IF NOT EXISTS idx_stix_objects_feed ON stix_objects(feed_id);
-            CREATE INDEX IF NOT EXISTS idx_stix_objects_type ON stix_objects(stix_type);
-            CREATE INDEX IF NOT EXISTS idx_threat_feeds_name ON threat_feeds(name);
+            )
         """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stix_indicators_value ON stix_indicators(value)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stix_indicators_type ON stix_indicators(indicator_type)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stix_indicators_feed ON stix_indicators(feed_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stix_objects_stix_id ON stix_objects(stix_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stix_objects_feed ON stix_objects(feed_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stix_objects_type ON stix_objects(stix_type)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_threat_feeds_name ON threat_feeds(name)")
 
 
 def _upsert_feed(feed_cfg: FeedConfig) -> str:
