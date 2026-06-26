@@ -883,6 +883,26 @@ class DatabaseManager:
                 except Exception:
                     pass
 
+            for alter_sql in [
+                "ALTER TABLE users ADD COLUMN organization_id TEXT DEFAULT ''",
+                "ALTER TABLE uploaded_logs ADD COLUMN organization_id TEXT DEFAULT ''",
+                "ALTER TABLE incidents ADD COLUMN organization_id TEXT DEFAULT ''",
+                "ALTER TABLE incidents ADD COLUMN priority TEXT DEFAULT 'P4'",
+                "ALTER TABLE incidents ADD COLUMN category TEXT DEFAULT 'general'",
+                "ALTER TABLE incidents ADD COLUMN impact_summary TEXT DEFAULT ''",
+                "ALTER TABLE incidents ADD COLUMN root_cause TEXT DEFAULT ''",
+                "ALTER TABLE incidents ADD COLUMN lessons_learned TEXT DEFAULT ''",
+                "ALTER TABLE incidents ADD COLUMN sla_deadline TEXT",
+                "ALTER TABLE incidents ADD COLUMN resolved_at TEXT",
+                "ALTER TABLE incidents ADD COLUMN closed_at TEXT",
+                "ALTER TABLE notifications ADD COLUMN organization_id TEXT DEFAULT ''",
+                "ALTER TABLE reports ADD COLUMN organization_id TEXT DEFAULT ''",
+            ]:
+                try:
+                    cur.execute(alter_sql)
+                except Exception:
+                    pass
+
     def _create_tables_postgresql(self):
         with self._cursor() as cur:
             cur.execute("""
@@ -1614,6 +1634,26 @@ class DatabaseManager:
                 except Exception:
                     pass
 
+            for alter_sql in [
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id TEXT DEFAULT ''",
+                "ALTER TABLE uploaded_logs ADD COLUMN IF NOT EXISTS organization_id TEXT DEFAULT ''",
+                "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS organization_id TEXT DEFAULT ''",
+                "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'P4'",
+                "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'general'",
+                "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS impact_summary TEXT DEFAULT ''",
+                "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS root_cause TEXT DEFAULT ''",
+                "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS lessons_learned TEXT DEFAULT ''",
+                "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS sla_deadline TIMESTAMPTZ",
+                "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ",
+                "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ",
+                "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS organization_id TEXT DEFAULT ''",
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS organization_id TEXT DEFAULT ''",
+            ]:
+                try:
+                    cur.execute(alter_sql)
+                except Exception:
+                    pass
+
             # Fix existing NULL feed_type rows
             try:
                 cur.execute("UPDATE threat_feeds SET feed_type = 'intel' WHERE feed_type IS NULL")
@@ -1626,22 +1666,135 @@ class DatabaseManager:
             except Exception:
                 pass
 
-    def create_user(self, email: str, password_hash: str, name: str, role: str = 'analyst') -> Dict[str, Any]:
+    # ── Organization Management ──
+
+    def create_organization(self, name: str, slug: str, description: str = "") -> str:
+        org_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("INSERT INTO organizations (id, name, slug, description, created_at) VALUES (%s,%s,%s,%s,%s)",
+                    (org_id, name, slug, description, now))
+            else:
+                cur.execute("INSERT INTO organizations (id, name, slug, description, created_at) VALUES (?,?,?,?,?)",
+                    (org_id, name, slug, description, now))
+        return org_id
+
+    def get_organization(self, org_id: str) -> Optional[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM organizations WHERE id = %s", (org_id,))
+            else:
+                cur.execute("SELECT * FROM organizations WHERE id = ?", (org_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def get_organization_by_slug(self, slug: str) -> Optional[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM organizations WHERE slug = %s", (slug,))
+            else:
+                cur.execute("SELECT * FROM organizations WHERE slug = ?", (slug,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def list_organizations(self) -> List[Dict]:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM organizations ORDER BY name")
+            return [dict(row) for row in cur.fetchall()]
+
+    def add_org_member(self, org_id: str, user_id: str, role: str = 'analyst') -> bool:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            try:
+                if USE_POSTGRESQL:
+                    cur.execute("INSERT INTO org_members (organization_id, user_id, role, joined_at) VALUES (%s,%s,%s,%s)",
+                        (org_id, user_id, role, now))
+                else:
+                    cur.execute("INSERT INTO org_members (organization_id, user_id, role, joined_at) VALUES (?,?,?,?)",
+                        (org_id, user_id, role, now))
+                return True
+            except Exception:
+                return False
+
+    def get_user_org(self, user_id: str) -> Optional[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""SELECT o.* FROM organizations o
+                    JOIN org_members m ON o.id = m.organization_id
+                    WHERE m.user_id = %s LIMIT 1""", (user_id,))
+            else:
+                cur.execute("""SELECT o.* FROM organizations o
+                    JOIN org_members m ON o.id = m.organization_id
+                    WHERE m.user_id = ? LIMIT 1""", (user_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def get_user_org_id(self, user_id: str) -> str:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT organization_id FROM users WHERE id = %s", (user_id,))
+            else:
+                cur.execute("SELECT organization_id FROM users WHERE id = ?", (user_id,))
+            row = cur.fetchone()
+            if row:
+                return row['organization_id'] if USE_POSTGRESQL else row[0]
+            return ""
+
+    def update_user_org(self, user_id: str, org_id: str):
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("UPDATE users SET organization_id = %s WHERE id = %s", (org_id, user_id))
+            else:
+                cur.execute("UPDATE users SET organization_id = ? WHERE id = ?", (org_id, user_id))
+
+    def get_org_members(self, org_id: str) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""SELECT u.id, u.email, u.name, u.role, m.role as org_role, m.joined_at
+                    FROM users u JOIN org_members m ON u.id = m.user_id
+                    WHERE m.organization_id = %s ORDER BY m.joined_at""", (org_id,))
+            else:
+                cur.execute("""SELECT u.id, u.email, u.name, u.role, m.role as org_role, m.joined_at
+                    FROM users u JOIN org_members m ON u.id = m.user_id
+                    WHERE m.organization_id = ? ORDER BY m.joined_at""", (org_id,))
+            return [dict(row) for row in cur.fetchall()]
+
+    def init_org_tables(self):
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""CREATE TABLE IF NOT EXISTS org_members (
+                    organization_id TEXT REFERENCES organizations(id),
+                    user_id TEXT REFERENCES users(id),
+                    role TEXT DEFAULT 'analyst',
+                    joined_at TIMESTAMPTZ,
+                    PRIMARY KEY (organization_id, user_id)
+                )""")
+            else:
+                cur.execute("""CREATE TABLE IF NOT EXISTS org_members (
+                    organization_id TEXT,
+                    user_id TEXT,
+                    role TEXT DEFAULT 'analyst',
+                    joined_at TEXT,
+                    PRIMARY KEY (organization_id, user_id)
+                )""")
+
+    def create_user(self, email: str, password_hash: str, name: str, role: str = 'analyst', organization_id: str = '') -> Dict[str, Any]:
         user_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         with self._cursor() as cur:
             if USE_POSTGRESQL:
                 cur.execute(
-                    "INSERT INTO users (id, email, password_hash, name, role, created_at) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id, email, name, role, created_at",
-                    (user_id, email, password_hash, name, role, now)
+                    "INSERT INTO users (id, email, password_hash, name, role, organization_id, created_at) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id, email, name, role, organization_id, created_at",
+                    (user_id, email, password_hash, name, role, organization_id, now)
                 )
                 return dict(cur.fetchone())
             else:
                 cur.execute(
-                    "INSERT INTO users (id, email, password_hash, name, role, created_at) VALUES (?,?,?,?,?,?)",
-                    (user_id, email, password_hash, name, role, now)
+                    "INSERT INTO users (id, email, password_hash, name, role, organization_id, created_at) VALUES (?,?,?,?,?,?,?)",
+                    (user_id, email, password_hash, name, role, organization_id, now)
                 )
-                return {"id": user_id, "email": email, "name": name, "role": role, "created_at": now}
+                return {"id": user_id, "email": email, "name": name, "role": role, "organization_id": organization_id, "created_at": now}
 
     def get_user_by_email(self, email: str) -> Optional[Dict]:
         with self._cursor() as cur:

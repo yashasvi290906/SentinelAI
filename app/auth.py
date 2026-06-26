@@ -264,12 +264,12 @@ def log_audit(user: str, action: str, details: str = ""):
 
 
 # ── User registration and authentication ──
-def register_user(email: str, password: str, name: str) -> dict | None:
+def register_user(email: str, password: str, name: str, organization_id: str = '') -> dict | None:
     existing = db.get_user_by_email(email)
     if existing:
         return None
     hashed = hash_password(password)
-    result = db.create_user(email, hashed, name)
+    result = db.create_user(email, hashed, name, organization_id=organization_id)
     if not result:
         return None
     log_audit(email, "register", f"New user registered: {email}")
@@ -277,7 +277,8 @@ def register_user(email: str, password: str, name: str) -> dict | None:
         "email": email,
         "name": name,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "role": "analyst"
+        "role": "analyst",
+        "organization_id": organization_id or result.get("organization_id", "")
     }
 
 
@@ -295,6 +296,7 @@ def authenticate_user(email: str, password: str) -> dict | None:
         "email": user["email"],
         "name": user["name"],
         "role": user["role"],
+        "organization_id": user.get("organization_id", ""),
         "created_at": user["created_at"]
     }
 

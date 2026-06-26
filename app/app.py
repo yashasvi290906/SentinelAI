@@ -137,6 +137,12 @@ async def startup_scheduler():
     except Exception as e:
         log_structured("warning", "system", f"Pipeline tracking init failed: {e}")
 
+    try:
+        db.init_org_tables()
+        log_structured("info", "system", "Organization tables initialized")
+    except Exception as e:
+        log_structured("warning", "system", f"Org tables init failed: {e}")
+
 
 @app.on_event("shutdown")
 async def shutdown_cleanup():
@@ -1306,9 +1312,10 @@ async def signup(data: RegisterRequest):
     user = register_user(data.email, data.password, data.name)
     if not user:
         return JSONResponse(status_code=409, content={"error": "Email already registered"})
-    access = create_access_token({"sub": data.email})
-    refresh = create_refresh_token({"sub": data.email})
-    return {"access_token": access, "refresh_token": refresh, "user": {"email": data.email, "name": data.name}}
+    org_id = user.get("organization_id", "")
+    access = create_access_token({"sub": data.email, "org_id": org_id, "role": user.get("role", "analyst")})
+    refresh = create_refresh_token({"sub": data.email, "org_id": org_id})
+    return {"access_token": access, "refresh_token": refresh, "user": {"email": data.email, "name": data.name, "organization_id": org_id}}
 
 @app.post("/auth/login")
 async def login(data: LoginRequest):
@@ -1319,9 +1326,10 @@ async def login(data: LoginRequest):
         log_structured("warning", "auth", f"Failed login: {data.email}")
         return JSONResponse(status_code=401, content={"error": "Invalid credentials"})
     log_structured("info", "auth", f"Successful login: {data.email}")
-    access = create_access_token({"sub": data.email})
-    refresh = create_refresh_token({"sub": data.email})
-    return {"access_token": access, "refresh_token": refresh, "user": {"email": data.email, "name": user["name"]}}
+    org_id = user.get("organization_id", "")
+    access = create_access_token({"sub": data.email, "org_id": org_id, "role": user.get("role", "analyst")})
+    refresh = create_refresh_token({"sub": data.email, "org_id": org_id})
+    return {"access_token": access, "refresh_token": refresh, "user": {"email": data.email, "name": user["name"], "organization_id": org_id, "role": user.get("role", "analyst")}}
 
 @app.post("/auth/send-otp")
 async def send_otp(data: OTPRequest):
@@ -1337,8 +1345,11 @@ async def verify_otp(data: OTPVerifyRequest):
     valid = verify_otp(data.email, data.otp)
     if not valid:
         return JSONResponse(status_code=400, content={"error": "Invalid or expired OTP"})
-    access = create_access_token({"sub": data.email})
-    refresh = create_refresh_token({"sub": data.email})
+    user = db.get_user_by_email(data.email)
+    org_id = user.get("organization_id", "") if user else ""
+    role = user.get("role", "analyst") if user else "analyst"
+    access = create_access_token({"sub": data.email, "org_id": org_id, "role": role})
+    refresh = create_refresh_token({"sub": data.email, "org_id": org_id})
     return {"access_token": access, "refresh_token": refresh}
 
 @app.post("/auth/refresh")
@@ -1346,8 +1357,78 @@ async def refresh_token(data: TokenRefreshRequest):
     payload = verify_token(data.refresh_token)
     if not payload or payload.get("type") != "refresh":
         return {"error": "Invalid refresh token"}
-    access = create_access_token({"sub": payload["sub"]})
+    access = create_access_token({"sub": payload["sub"], "org_id": payload.get("org_id", ""), "role": payload.get("role", "analyst")})
     return {"access_token": access}
+
+
+# =========================
+# Organization Management
+# =========================
+
+@app.post("/api/orgs")
+async def create_organization(request: Request):
+    body = await request.json()
+    name = body.get("name", "").strip()
+    slug = body.get("slug", "").strip().lower()
+    description = body.get("description", "")
+    if not name or not slug:
+        return JSONResponse(status_code=400, content={"error": "name and slug required"})
+    existing = db.get_organization_by_slug(slug)
+    if existing:
+        return JSONResponse(status_code=409, content={"error": "Slug already taken"})
+    org_id = db.create_organization(name, slug, description)
+    return {"organization_id": org_id, "name": name, "slug": slug}
+
+
+@app.get("/api/orgs")
+async def list_organizations():
+    orgs = db.list_organizations()
+    return {"organizations": orgs}
+
+
+@app.get("/api/orgs/{org_id}")
+async def get_organization(org_id: str):
+    org = db.get_organization(org_id)
+    if not org:
+        return JSONResponse(status_code=404, content={"error": "Organization not found"})
+    members = db.get_org_members(org_id)
+    return {**org, "members": members}
+
+
+@app.post("/api/orgs/{org_id}/join")
+async def join_organization(org_id: str, request: Request, payload: dict = Depends(require_auth)):
+    body = await request.json()
+    role = body.get("role", "analyst")
+    email = payload.get("sub", "")
+    user = db.get_user_by_email(email)
+    if not user:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+    user_id = user["id"] if isinstance(user, dict) else user.get("id")
+    db.update_user_org(user_id, org_id)
+    db.add_org_member(org_id, user_id, role)
+    return {"status": "joined", "organization_id": org_id}
+
+
+@app.get("/api/orgs/{org_id}/members")
+async def get_org_members(org_id: str):
+    members = db.get_org_members(org_id)
+    return {"members": members, "count": len(members)}
+
+
+@app.get("/auth/me")
+async def get_current_user(payload: dict = Depends(require_auth)):
+    email = payload.get("sub", "")
+    user = db.get_user_by_email(email)
+    if not user:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+    org_id = payload.get("org_id", user.get("organization_id", ""))
+    return {
+        "email": user["email"],
+        "name": user["name"],
+        "role": payload.get("role", user.get("role", "analyst")),
+        "organization_id": org_id,
+    }
+
 
 @app.get("/auth/audit")
 async def get_audit_log(payload: dict = Depends(require_auth)):
