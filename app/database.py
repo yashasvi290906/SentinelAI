@@ -2510,7 +2510,170 @@ class DatabaseManager:
 
             return {'total': total, 'open': open_count, 'critical': critical_count, 'by_severity': by_severity, 'by_status': by_status}
 
-    def get_uploaded_log_by_id(self, log_id: str) -> Optional[Dict]:
+    # ── Incident Lifecycle Operations ──
+
+    def update_incident(self, incident_id: str, **fields) -> bool:
+        allowed = {'title', 'severity', 'description', 'priority', 'category',
+                    'assigned_to', 'impact_summary', 'root_cause', 'lessons_learned',
+                    'sla_deadline', 'organization_id'}
+        updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        if not updates:
+            return False
+        now = datetime.now(timezone.utc).isoformat()
+        updates['updated_at'] = now
+        set_parts = []
+        params = []
+        for k, v in updates.items():
+            q = '%s' if USE_POSTGRESQL else '?'
+            set_parts.append(f"{k} = {q}")
+            params.append(v)
+        params.append(incident_id)
+        with self._cursor() as cur:
+            cur.execute(f"UPDATE incidents SET {', '.join(set_parts)} WHERE id = {'%s' if USE_POSTGRESQL else '?'}", tuple(params))
+            return cur.rowcount > 0
+
+    def archive_incident(self, incident_id: str) -> bool:
+        return self.update_incident(incident_id, status='archived')
+
+    def merge_incidents(self, primary_id: str, secondary_ids: List[str]) -> str:
+        primary = self.get_incident(primary_id)
+        if not primary:
+            return ""
+        all_alert_ids = json.loads(primary.get('alert_ids', '[]'))
+        all_ips = json.loads(primary.get('affected_ips', '[]'))
+        all_techniques = json.loads(primary.get('mitre_techniques', '[]'))
+        all_tactics = json.loads(primary.get('mitre_tactics', '[]'))
+        all_recommendations = json.loads(primary.get('recommendations', '[]'))
+        all_timeline = json.loads(primary.get('timeline', '[]'))
+        for sid in secondary_ids:
+            sec = self.get_incident(sid)
+            if not sec:
+                continue
+            all_alert_ids.extend(json.loads(sec.get('alert_ids', '[]')))
+            all_ips.extend(json.loads(sec.get('affected_ips', '[]')))
+            all_techniques.extend(json.loads(sec.get('mitre_techniques', '[]')))
+            all_tactics.extend(json.loads(sec.get('mitre_tactics', '[]')))
+            all_recommendations.extend(json.loads(sec.get('recommendations', '[]')))
+            all_timeline.extend(json.loads(sec.get('timeline', '[]')))
+            all_timeline.append({'event': f'Merged from incident {sid}', 'timestamp': datetime.now(timezone.utc).isoformat()})
+            self.archive_incident(sid)
+        all_alert_ids = list(dict.fromkeys(all_alert_ids))
+        all_ips = list(dict.fromkeys(all_ips))
+        all_techniques = list(dict.fromkeys(all_techniques))
+        all_tactics = list(dict.fromkeys(all_tactics))
+        all_recommendations = list(dict.fromkeys(all_recommendations))
+        self.update_incident(primary_id,
+            description=primary.get('description', '') + f'\n[Merged {len(secondary_ids)} incidents]',
+            alert_ids=json.dumps(all_alert_ids),
+            affected_ips=json.dumps(all_ips),
+            mitre_techniques=json.dumps(all_techniques),
+            mitre_tactics=json.dumps(all_tactics),
+            recommendations=json.dumps(all_recommendations),
+            timeline=json.dumps(all_timeline))
+        return primary_id
+
+    def add_incident_evidence(self, incident_id: str, evidence_type: str, description: str = "",
+                              file_name: str = "", source_type: str = "", source_id: str = "") -> str:
+        evidence_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        import hashlib
+        content_hash = hashlib.sha256(f"{incident_id}{evidence_type}{now}".encode()).hexdigest()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""INSERT INTO evidence (id, incident_id, evidence_type, source_type, source_id,
+                    description, file_name, sha256_hash, collected_at, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (evidence_id, incident_id, evidence_type, source_type, source_id,
+                     description, file_name, content_hash, now, now))
+            else:
+                cur.execute("""INSERT INTO evidence (id, incident_id, evidence_type, source_type, source_id,
+                    description, file_name, sha256_hash, collected_at, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (evidence_id, incident_id, evidence_type, source_type, source_id,
+                     description, file_name, content_hash, now, now))
+        return evidence_id
+
+    def get_incident_evidence(self, incident_id: str) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM evidence WHERE incident_id = %s ORDER BY collected_at", (incident_id,))
+            else:
+                cur.execute("SELECT * FROM evidence WHERE incident_id = ? ORDER BY collected_at", (incident_id,))
+            return [dict(row) for row in cur.fetchall()]
+
+    def add_incident_timeline(self, incident_id: str, event_type: str, description: str,
+                              source: str = "", evidence_id: str = "", confidence: float = 1.0) -> str:
+        entry_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""INSERT INTO forensic_timeline (id, incident_id, event_time, event_type,
+                    source, description, evidence_id, confidence, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (entry_id, incident_id, now, event_type, source, description, evidence_id, confidence, now))
+            else:
+                cur.execute("""INSERT INTO forensic_timeline (id, incident_id, event_time, event_type,
+                    source, description, evidence_id, confidence, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (entry_id, incident_id, now, event_type, source, description, evidence_id, confidence, now))
+        return entry_id
+
+    def get_incident_timeline(self, incident_id: str) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM forensic_timeline WHERE incident_id = %s ORDER BY event_time", (incident_id,))
+            else:
+                cur.execute("SELECT * FROM forensic_timeline WHERE incident_id = ? ORDER BY event_time", (incident_id,))
+            return [dict(row) for row in cur.fetchall()]
+
+    def create_incident_notification(self, user_id: str, incident_id: str, title: str, message: str, notif_type: str = "info") -> str:
+        notif_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("INSERT INTO notifications (id, user_id, title, message, type, created_at) VALUES (%s,%s,%s,%s,%s,%s)",
+                            (notif_id, user_id, title, message, notif_type, now))
+            else:
+                cur.execute("INSERT INTO notifications (id, user_id, title, message, type, created_at) VALUES (?,?,?,?,?,?)",
+                            (notif_id, user_id, title, message, notif_type, now))
+        return notif_id
+
+    def get_incident_mttt(self) -> Dict[str, Any]:
+        with self._cursor() as cur:
+            cur.execute("SELECT created_at, updated_at, status FROM incidents WHERE status IN ('contained','resolved','closed')")
+            rows = cur.fetchall()
+            if not rows:
+                return {'mttt_minutes': 0, 'mttr_minutes': 0, 'resolved_count': 0}
+            contain_times = []
+            resolve_times = []
+            for row in rows:
+                try:
+                    created = datetime.fromisoformat(row['created_at'] if USE_POSTGRESQL else row[0])
+                    updated = datetime.fromisoformat(row['updated_at'] if USE_POSTGRESQL else row[1])
+                    status = row['status'] if USE_POSTGRESQL else row[2]
+                    delta = (updated - created).total_seconds() / 60
+                    if status in ('contained', 'resolved', 'closed'):
+                        contain_times.append(delta)
+                    if status in ('resolved', 'closed'):
+                        resolve_times.append(delta)
+                except Exception:
+                    continue
+            return {
+                'mttt_minutes': round(sum(contain_times) / len(contain_times), 1) if contain_times else 0,
+                'mttr_minutes': round(sum(resolve_times) / len(resolve_times), 1) if resolve_times else 0,
+                'resolved_count': len(resolve_times),
+            }
+
+    def bulk_update_incidents(self, incident_ids: List[str], status: str = None, assigned_to: str = None) -> int:
+        count = 0
+        for iid in incident_ids:
+            if status:
+                self.update_incident_status(iid, status, assigned_to)
+                count += 1
+            elif assigned_to:
+                self.update_incident(iid, assigned_to=assigned_to)
+                count += 1
+        return count
         with self._cursor() as cur:
             if USE_POSTGRESQL:
                 cur.execute("SELECT * FROM uploaded_logs WHERE id = %s", (log_id,))

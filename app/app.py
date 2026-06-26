@@ -2574,9 +2574,121 @@ async def correlate_alerts():
     return {"correlated": len(created), "incident_ids": created}
 
 
-# =========================
-# Asset Inventory
-# =========================
+@app.put("/api/incidents/{incident_id}")
+async def update_incident_fields(incident_id: str, request: Request):
+    from database import db
+    body = await request.json()
+    allowed = ('title', 'severity', 'description', 'priority', 'category',
+               'assigned_to', 'impact_summary', 'root_cause', 'lessons_learned', 'sla_deadline')
+    fields = {k: v for k, v in body.items() if k in allowed and v is not None}
+    if not fields:
+        return JSONResponse(status_code=400, content={"error": "No valid fields to update"})
+    incident = db.get_incident(incident_id)
+    if not incident:
+        return JSONResponse(status_code=404, content={"error": "Incident not found"})
+    db.update_incident(incident_id, **fields)
+    return {"status": "updated", "fields": list(fields.keys())}
+
+
+@app.delete("/api/incidents/{incident_id}")
+async def archive_incident(incident_id: str):
+    from database import db
+    incident = db.get_incident(incident_id)
+    if not incident:
+        return JSONResponse(status_code=404, content={"error": "Incident not found"})
+    db.update_incident_status(incident_id, 'archived')
+    try:
+        db.add_incident_note(incident_id, user_id=None, note='Incident archived')
+    except Exception:
+        pass
+    return {"status": "archived", "incident_id": incident_id}
+
+
+@app.post("/api/incidents/merge")
+async def merge_incidents_endpoint(request: Request):
+    from services.incident_service import incident_service as inc_svc
+    body = await request.json()
+    primary_id = body.get("primary_id", "")
+    secondary_ids = body.get("secondary_ids", [])
+    if not primary_id or not secondary_ids:
+        return JSONResponse(status_code=400, content={"error": "primary_id and secondary_ids required"})
+    result = inc_svc.merge(primary_id, secondary_ids)
+    if not result['success']:
+        return JSONResponse(status_code=400, content=result)
+    return result
+
+
+@app.post("/api/incidents/bulk-update")
+async def bulk_update_incidents(request: Request):
+    from database import db
+    body = await request.json()
+    ids = body.get("incident_ids", [])
+    status = body.get("status")
+    assigned_to = body.get("assigned_to")
+    if not ids:
+        return JSONResponse(status_code=400, content={"error": "incident_ids required"})
+    count = db.bulk_update_incidents(ids, status=status, assigned_to=assigned_to)
+    return {"updated": count, "total_requested": len(ids)}
+
+
+@app.get("/api/incidents/{incident_id}/detail")
+async def get_incident_detail(incident_id: str):
+    result = incident_service.get_full_incident(incident_id)
+    if not result:
+        return JSONResponse(status_code=404, content={"error": "Incident not found"})
+    return result
+
+
+@app.post("/api/incidents/{incident_id}/evidence")
+async def add_incident_evidence(incident_id: str, request: Request):
+    body = await request.json()
+    result = incident_service.add_evidence(
+        incident_id,
+        evidence_type=body.get('evidence_type', 'log'),
+        description=body.get('description', ''),
+        file_name=body.get('file_name', ''),
+        source_type=body.get('source_type', ''),
+        source_id=body.get('source_id', ''))
+    if not result['success']:
+        return JSONResponse(status_code=400, content=result)
+    return result
+
+
+@app.get("/api/incidents/{incident_id}/evidence")
+async def get_incident_evidence(incident_id: str):
+    from database import db
+    evidence = db.get_incident_evidence(incident_id)
+    return {"evidence": evidence, "count": len(evidence)}
+
+
+@app.post("/api/incidents/{incident_id}/timeline")
+async def add_incident_timeline_entry(incident_id: str, request: Request):
+    body = await request.json()
+    result = incident_service.add_timeline_entry(
+        incident_id,
+        event_type=body.get('event_type', 'note'),
+        description=body.get('description', ''),
+        source=body.get('source', 'analyst'),
+        evidence_id=body.get('evidence_id', ''),
+        confidence=body.get('confidence', 1.0))
+    if not result['success']:
+        return JSONResponse(status_code=400, content=result)
+    return result
+
+
+@app.get("/api/incidents/{incident_id}/timeline")
+async def get_incident_timeline(incident_id: str):
+    from database import db
+    timeline = db.get_incident_timeline(incident_id)
+    return {"timeline": timeline, "count": len(timeline)}
+
+
+@app.post("/api/incidents/{incident_id}/escalate")
+async def escalate_incident(incident_id: str):
+    result = incident_service.escalate(incident_id)
+    if not result['success']:
+        return JSONResponse(status_code=400, content=result)
+    return result
 class AssetCreate(BaseModel):
     hostname: str = Field(..., min_length=1, max_length=255)
     ip_address: str = Field(..., max_length=45)
