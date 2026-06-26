@@ -37,7 +37,7 @@ except ImportError:
 
 from model_loader import model, le, markov, ATTACK_WEIGHTS, ATTACK_CLASSES, ATTACK_TO_IDX, MODEL_VERSION
 from predict import predict_next, markov_predict
-from auth import register_user, authenticate_user, generate_otp, verify_otp, create_access_token, create_refresh_token, verify_token, check_rate_limit, log_audit, users_db, audit_log
+from auth import register_user, authenticate_user, generate_otp, verify_otp, create_access_token, create_refresh_token, verify_token, check_rate_limit, log_audit
 from database import db
 
 
@@ -1345,7 +1345,16 @@ async def refresh_token(data: TokenRefreshRequest):
 
 @app.get("/auth/audit")
 async def get_audit_log(payload: dict = Depends(require_auth)):
-    return {"audit_log": audit_log[-50:]}
+    try:
+        with db._cursor() as cur:
+            if db.use_postgresql:
+                cur.execute("SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT 50")
+            else:
+                cur.execute("SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT 50")
+            rows = [dict(r) for r in cur.fetchall()]
+        return {"audit_log": rows}
+    except Exception:
+        return {"audit_log": []}
 
 
 # =========================
