@@ -631,11 +631,9 @@ class ComplianceService:
 
     def _ensure_tables(self):
         """Create compliance tables if they do not exist."""
+        # Transaction 1: Create tables only (no indexes, no seeds)
         try:
             with db._cursor() as cur:
-                is_pg = getattr(db, 'use_postgresql', False)
-
-                # Create tables if not exist
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS nist_controls (
                         id TEXT PRIMARY KEY,
@@ -647,25 +645,36 @@ class ComplianceService:
                         evidence_ids TEXT DEFAULT '[]',
                         responsible_party TEXT,
                         last_assessed_at TEXT,
-                        next_assessment_at TEXT,
+                        next_assessed_at TEXT,
                         notes TEXT,
                         implementation_guidance TEXT,
                         automated_check TEXT,
                         created_at TEXT
                     )
                 """)
+        except Exception as e:
+            logger.error(f"Failed to create nist_controls table: {e}", exc_info=True)
+            return
 
-                # Add missing columns to existing tables (idempotent)
+        # Transaction 2: Add missing columns (separate so failure doesn't block)
+        try:
+            with db._cursor() as cur:
                 for col_name, col_type in [
                     ("implementation_guidance", "TEXT"),
                     ("automated_check", "TEXT"),
                     ("created_at", "TEXT"),
                 ]:
                     try:
+                        ph = "%s" if getattr(db, 'use_postgresql', False) else "?"
                         cur.execute(f"ALTER TABLE nist_controls ADD COLUMN {col_name} {col_type}")
                     except Exception:
-                        pass  # Column already exists
+                        pass
+        except Exception:
+            pass
 
+        # Transaction 3: Create compliance_assessments table
+        try:
+            with db._cursor() as cur:
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS compliance_assessments (
                         id TEXT PRIMARY KEY,
@@ -680,10 +689,8 @@ class ComplianceService:
                         created_at TEXT
                     )
                 """)
-
         except Exception as e:
-            logger.error(f"Failed to create compliance tables: {e}", exc_info=True)
-            return
+            logger.error(f"Failed to create compliance_assessments table: {e}", exc_info=True)
 
         # Seed NIST controls (separate transaction so index failure doesn't block table creation)
         try:
