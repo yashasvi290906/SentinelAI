@@ -10,18 +10,19 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-# Production stage
+# Production stage - serve static export with npx serve
 FROM node:20-alpine AS runner
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Copy built assets
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
+# Install serve globally
+RUN npm install -g serve
+
+# Copy built static export
+COPY --from=builder /app/out ./out
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["serve", "-s", "out", "-l", "3000"]
