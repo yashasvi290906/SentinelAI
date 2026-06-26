@@ -2674,6 +2674,191 @@ class DatabaseManager:
                 self.update_incident(iid, assigned_to=assigned_to)
                 count += 1
         return count
+
+    # ── Pipeline Tracking Operations ──
+
+    def init_pipeline_tracking(self):
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""CREATE TABLE IF NOT EXISTS pipeline_stages (
+                    id TEXT PRIMARY KEY,
+                    event_id TEXT NOT NULL,
+                    log_id TEXT,
+                    stage TEXT NOT NULL,
+                    status TEXT DEFAULT 'processing',
+                    entered_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    latency_ms REAL,
+                    details TEXT DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                )""")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_stages_event ON pipeline_stages(event_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_stages_log ON pipeline_stages(log_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_stages_stage ON pipeline_stages(stage)")
+                cur.execute("""CREATE TABLE IF NOT EXISTS pipeline_metrics (
+                    id TEXT PRIMARY KEY,
+                    stage TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    events_processed INTEGER DEFAULT 0,
+                    events_succeeded INTEGER DEFAULT 0,
+                    events_failed INTEGER DEFAULT 0,
+                    avg_latency_ms REAL DEFAULT 0,
+                    p95_latency_ms REAL DEFAULT 0,
+                    metadata TEXT DEFAULT '{}'
+                )""")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_metrics_stage ON pipeline_metrics(stage)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_metrics_ts ON pipeline_metrics(timestamp)")
+            else:
+                cur.execute("""CREATE TABLE IF NOT EXISTS pipeline_stages (
+                    id TEXT PRIMARY KEY,
+                    event_id TEXT NOT NULL,
+                    log_id TEXT,
+                    stage TEXT NOT NULL,
+                    status TEXT DEFAULT 'processing',
+                    entered_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    latency_ms REAL,
+                    details TEXT DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                )""")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_stages_event ON pipeline_stages(event_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_stages_log ON pipeline_stages(log_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_stages_stage ON pipeline_stages(stage)")
+                cur.execute("""CREATE TABLE IF NOT EXISTS pipeline_metrics (
+                    id TEXT PRIMARY KEY,
+                    stage TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    events_processed INTEGER DEFAULT 0,
+                    events_succeeded INTEGER DEFAULT 0,
+                    events_failed INTEGER DEFAULT 0,
+                    avg_latency_ms REAL DEFAULT 0,
+                    p95_latency_ms REAL DEFAULT 0,
+                    metadata TEXT DEFAULT '{}'
+                )""")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_metrics_stage ON pipeline_metrics(stage)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_metrics_ts ON pipeline_metrics(timestamp)")
+
+    def enter_pipeline_stage(self, event_id: str, stage: str, log_id: str = None) -> str:
+        stage_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""INSERT INTO pipeline_stages (id, event_id, log_id, stage, status, entered_at, created_at)
+                    VALUES (%s,%s,%s,%s,'processing',%s,%s)""",
+                    (stage_id, event_id, log_id, stage, now, now))
+            else:
+                cur.execute("""INSERT INTO pipeline_stages (id, event_id, log_id, stage, status, entered_at, created_at)
+                    VALUES (?,?,?,?,?,?,?)""",
+                    (stage_id, event_id, log_id, stage, 'processing', now, now))
+        return stage_id
+
+    def complete_pipeline_stage(self, stage_id: str, status: str = 'completed', details: str = '{}'):
+        now = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""UPDATE pipeline_stages SET status=%s, completed_at=%s, details=%s,
+                    latency_ms = EXTRACT(EPOCH FROM (CAST(%s AS TIMESTAMP) - CAST(entered_at AS TIMESTAMP))) * 1000
+                    WHERE id=%s""",
+                    (status, now, details, now, stage_id))
+            else:
+                cur.execute("UPDATE pipeline_stages SET status=?, completed_at=?, details=? WHERE id=?",
+                    (status, now, details, stage_id))
+                cur.execute("SELECT entered_at FROM pipeline_stages WHERE id=?", (stage_id,))
+                row = cur.fetchone()
+                if row:
+                    try:
+                        entered = datetime.fromisoformat(row[0] if USE_POSTGRESQL else row[0])
+                        completed = datetime.fromisoformat(now)
+                        latency = (completed - entered).total_seconds() * 1000
+                        cur.execute("UPDATE pipeline_stages SET latency_ms=? WHERE id=?", (latency, stage_id))
+                    except Exception:
+                        pass
+
+    def get_event_pipeline(self, event_id: str) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM pipeline_stages WHERE event_id = %s ORDER BY entered_at", (event_id,))
+            else:
+                cur.execute("SELECT * FROM pipeline_stages WHERE event_id = ? ORDER BY entered_at", (event_id,))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_log_pipeline(self, log_id: str) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("SELECT * FROM pipeline_stages WHERE log_id = %s ORDER BY entered_at", (log_id,))
+            else:
+                cur.execute("SELECT * FROM pipeline_stages WHERE log_id = ? ORDER BY entered_at", (log_id,))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_pipeline_metrics(self, stage: str = None, hours: int = 24) -> List[Dict]:
+        cutoff = datetime.now(timezone.utc).isoformat()
+        with self._cursor() as cur:
+            if stage:
+                if USE_POSTGRESQL:
+                    cur.execute("""SELECT stage, COUNT(*) as total,
+                        COUNT(CASE WHEN status='completed' THEN 1 END) as succeeded,
+                        COUNT(CASE WHEN status='failed' THEN 1 END) as failed,
+                        AVG(latency_ms) as avg_latency,
+                        MAX(latency_ms) as max_latency
+                        FROM pipeline_stages WHERE stage=%s
+                        GROUP BY stage""", (stage,))
+                else:
+                    cur.execute("""SELECT stage, COUNT(*) as total,
+                        COUNT(CASE WHEN status='completed' THEN 1 END) as succeeded,
+                        COUNT(CASE WHEN status='failed' THEN 1 END) as failed,
+                        AVG(latency_ms) as avg_latency,
+                        MAX(latency_ms) as max_latency
+                        FROM pipeline_stages WHERE stage=? GROUP BY stage""", (stage,))
+            else:
+                cur.execute("""SELECT stage, COUNT(*) as total,
+                    COUNT(CASE WHEN status='completed' THEN 1 END) as succeeded,
+                    COUNT(CASE WHEN status='failed' THEN 1 END) as failed,
+                    AVG(latency_ms) as avg_latency,
+                    MAX(latency_ms) as max_latency
+                    FROM pipeline_stages GROUP BY stage""")
+            rows = cur.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_pipeline_throughput(self, minutes: int = 60) -> List[Dict]:
+        with self._cursor() as cur:
+            if USE_POSTGRESQL:
+                cur.execute("""SELECT
+                    DATE_TRUNC('hour', entered_at) as hour_bucket,
+                    stage,
+                    COUNT(*) as event_count
+                    FROM pipeline_stages
+                    WHERE entered_at >= NOW() - INTERVAL '%s minutes'
+                    GROUP BY hour_bucket, stage
+                    ORDER BY hour_bucket""", (minutes,))
+            else:
+                cur.execute("""SELECT
+                    substr(entered_at, 1, 13) as hour_bucket,
+                    stage,
+                    COUNT(*) as event_count
+                    FROM pipeline_stages
+                    WHERE entered_at >= datetime('now', ?)
+                    GROUP BY hour_bucket, stage
+                    ORDER BY hour_bucket""", (f'-{minutes} minutes',))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_pipeline_summary(self) -> Dict[str, Any]:
+        stages = ['ingested', 'parsed', 'normalized', 'ml_detected', 'rule_matched',
+                   'sigma_matched', 'ioc_matched', 'alert_created', 'correlated',
+                   'incident_created', 'notified']
+        result = {}
+        with self._cursor() as cur:
+            for stage in stages:
+                if USE_POSTGRESQL:
+                    cur.execute("SELECT COUNT(*) as total, AVG(latency_ms) as avg_ms FROM pipeline_stages WHERE stage=%s", (stage,))
+                else:
+                    cur.execute("SELECT COUNT(*) as total, AVG(latency_ms) as avg_ms FROM pipeline_stages WHERE stage=?", (stage,))
+                row = cur.fetchone()
+                total = row['total'] if USE_POSTGRESQL else (row[0] if row else 0)
+                avg_ms = row['avg_ms'] if USE_POSTGRESQL else (row[1] if row else 0)
+                result[stage] = {'count': total or 0, 'avg_latency_ms': round(avg_ms or 0, 2)}
+        return result
+
+    def get_uploaded_log_by_id(self, log_id: str) -> Optional[Dict]:
         with self._cursor() as cur:
             if USE_POSTGRESQL:
                 cur.execute("SELECT * FROM uploaded_logs WHERE id = %s", (log_id,))

@@ -131,6 +131,12 @@ async def startup_scheduler():
     except Exception as e:
         log_structured("error", "system", f"Scheduler startup failed: {e}")
 
+    try:
+        db.init_pipeline_tracking()
+        log_structured("info", "system", "Pipeline tracking tables initialized")
+    except Exception as e:
+        log_structured("warning", "system", f"Pipeline tracking init failed: {e}")
+
 
 @app.on_event("shutdown")
 async def shutdown_cleanup():
@@ -1491,12 +1497,33 @@ async def upload_log(file: UploadFile = File(...)):
             file_size=len(content),
         )
 
+        # Pipeline tracking: ingested
+        ingest_stages = []
+        for ev in event_dicts:
+            eid = ev.get('id', str(uuid.uuid4()))
+            sid = db.enter_pipeline_stage(eid, 'ingested', log_id)
+            ingest_stages.append((eid, sid))
+            db.complete_pipeline_stage(sid, 'completed', json.dumps({'filename': file.filename, 'event_count': len(event_dicts)}))
+
         db.insert_log_events(log_id, event_dicts)
+
+        # Pipeline tracking: parsed
+        for eid, _ in ingest_stages:
+            sid = db.enter_pipeline_stage(eid, 'parsed', log_id)
+            db.complete_pipeline_stage(sid, 'completed', json.dumps({'parser': 'multi_format'}))
 
         detections = threat_detector.analyze_events(event_dicts)
         detection_dicts = [d.to_dict() for d in detections]
         if detection_dicts:
             db.insert_threat_detections(log_id, detection_dicts)
+
+        # Pipeline tracking: ml_detected
+        for det in detection_dicts:
+            src_ip = det.get('source_ip', '')
+            matched = [eid for eid, _ in ingest_stages if True][:1]
+            if matched:
+                sid = db.enter_pipeline_stage(matched[0], 'ml_detected', log_id)
+                db.complete_pipeline_stage(sid, 'completed', json.dumps({'threat_type': det.get('threat_type', ''), 'confidence': det.get('confidence', 0)}))
 
         # Create alerts from detections + broadcast for real-time UI
         for det in detections:
@@ -1516,6 +1543,11 @@ async def upload_log(file: UploadFile = File(...)):
                 recommendations=det.recommendations,
                 log_id=log_id,
             )
+            # Pipeline tracking: alert_created
+            for eid, _ in ingest_stages[:1]:
+                sid = db.enter_pipeline_stage(eid, 'alert_created', log_id)
+                db.complete_pipeline_stage(sid, 'completed', json.dumps({'alert_type': det.threat_type}))
+
             broadcast_queue.appendleft({
                 "id": f"evt-{uuid.uuid4().hex[:8]}",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1548,6 +1580,12 @@ async def upload_log(file: UploadFile = File(...)):
                         mitre_techniques=inc.mitre_techniques, mitre_tactics=inc.mitre_tactics,
                         recommendations=inc.recommendations, confidence=inc.confidence,
                     )
+                    # Pipeline tracking: correlated + incident_created
+                    for eid, _ in ingest_stages[:1]:
+                        sid = db.enter_pipeline_stage(eid, 'correlated', log_id)
+                        db.complete_pipeline_stage(sid, 'completed', json.dumps({'incident_id': inc_id}))
+                        sid2 = db.enter_pipeline_stage(eid, 'incident_created', log_id)
+                        db.complete_pipeline_stage(sid2, 'completed', json.dumps({'incident_id': inc_id, 'title': inc.title}))
                     broadcast_queue.appendleft({
                         "id": f"inc-{uuid.uuid4().hex[:8]}",
                         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -2190,6 +2228,8 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
 
     event_dict = event.model_dump()
     event_dict['source_type'] = source
+    event_id = event_dict.get('id', str(uuid.uuid4()))
+    event_dict['id'] = event_id
 
     log_id = db.create_uploaded_log(
         filename=f"ingest_{source}_{(event.timestamp or datetime.now(timezone.utc).isoformat())[:10]}",
@@ -2198,16 +2238,32 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
     )
     db.insert_log_events(log_id, [event_dict])
 
+    # Pipeline tracking: ingested
+    sid_ingest = db.enter_pipeline_stage(event_id, 'ingested', log_id)
+    db.complete_pipeline_stage(sid_ingest, 'completed', json.dumps({'source': source}))
+
     # Normalize event
     normalized = event_normalizer.normalize(event_dict, source)
+
+    # Pipeline tracking: normalized
+    sid_norm = db.enter_pipeline_stage(event_id, 'normalized', log_id)
+    db.complete_pipeline_stage(sid_norm, 'completed', json.dumps({'source_type': source}))
 
     # Run through threat detector (existing ML/rule-based detection)
     detections = threat_detector.analyze_events([event_dict])
     created_alerts = []
 
+    # Pipeline tracking: ml_detected
+    if detections:
+        sid_ml = db.enter_pipeline_stage(event_id, 'ml_detected', log_id)
+        db.complete_pipeline_stage(sid_ml, 'completed', json.dumps({'detection_count': len(detections)}))
+
     # Run through YAML rule engine
     try:
         rule_matches = detection_rule_engine.evaluate(event_dict, db)
+        if rule_matches:
+            sid_rule = db.enter_pipeline_stage(event_id, 'rule_matched', log_id)
+            db.complete_pipeline_stage(sid_rule, 'completed', json.dumps({'rule_count': len(rule_matches)}))
         for match in rule_matches:
             alert = db.create_alert(
                 alert_type=match.rule_title.lower().replace(" ", "_"),
@@ -2244,6 +2300,9 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
     try:
         from services.sigma_engine import sigma_engine
         sigma_matches = sigma_engine.evaluate_event(event_dict)
+        if sigma_matches:
+            sid_sigma = db.enter_pipeline_stage(event_id, 'sigma_matched', log_id)
+            db.complete_pipeline_stage(sid_sigma, 'completed', json.dumps({'sigma_count': len(sigma_matches)}))
         for match in sigma_matches:
             alert = db.create_alert(
                 alert_type="sigma_rule",
@@ -2276,6 +2335,7 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
         pass  # Sigma engine is optional
 
     # Check against threat feed IOCs
+    ioc_found = False
     try:
         from services.threat_feed_service import threat_feed_service
         src_ip = event_dict.get("source_ip", "")
@@ -2284,6 +2344,7 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
             if ip:
                 ioc_match = threat_feed_service.match_indicator(ip)
                 if ioc_match:
+                    ioc_found = True
                     alert = db.create_alert(
                         alert_type="threat_intel_match",
                         severity=ioc_match.get("severity", "HIGH"),
@@ -2304,6 +2365,11 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
                         created_alerts.append(alert)
     except Exception:
         pass  # Threat feed matching is optional
+
+    # Pipeline tracking: ioc_matched
+    if ioc_found:
+        sid_ioc = db.enter_pipeline_stage(event_id, 'ioc_matched', log_id)
+        db.complete_pipeline_stage(sid_ioc, 'completed', json.dumps({'ioc': True}))
 
     if detections:
         db.insert_threat_detections(log_id, [d.to_dict() for d in detections])
@@ -2326,6 +2392,9 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
             )
             if alert:
                 created_alerts.append(alert)
+                # Pipeline tracking: alert_created
+                sid_alert = db.enter_pipeline_stage(event_id, 'alert_created', log_id)
+                db.complete_pipeline_stage(sid_alert, 'completed', json.dumps({'alert_type': det.threat_type}))
 
             # Push to broadcast queue for real-time WebSocket
             broadcast_queue.appendleft({
@@ -2359,6 +2428,11 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
                         mitre_techniques=inc.mitre_techniques, mitre_tactics=inc.mitre_tactics,
                         recommendations=inc.recommendations, confidence=inc.confidence,
                     )
+                    # Pipeline tracking: correlated + incident_created
+                    sid_corr = db.enter_pipeline_stage(event_id, 'correlated', log_id)
+                    db.complete_pipeline_stage(sid_corr, 'completed', json.dumps({'incident_id': inc_id}))
+                    sid_inc = db.enter_pipeline_stage(event_id, 'incident_created', log_id)
+                    db.complete_pipeline_stage(sid_inc, 'completed', json.dumps({'incident_id': inc_id, 'title': inc.title}))
                     broadcast_queue.appendleft({
                         "id": f"inc-{uuid.uuid4().hex[:8]}",
                         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -2689,6 +2763,44 @@ async def escalate_incident(incident_id: str):
     if not result['success']:
         return JSONResponse(status_code=400, content=result)
     return result
+
+
+# =========================
+# Detection Pipeline Tracking
+# =========================
+
+@app.get("/api/pipeline/summary")
+async def get_pipeline_summary():
+    from database import db as _db
+    return _db.get_pipeline_summary()
+
+
+@app.get("/api/pipeline/metrics")
+async def get_pipeline_metrics(stage: str = "", hours: int = 24):
+    from database import db as _db
+    return {"metrics": _db.get_pipeline_metrics(stage=stage or None, hours=hours)}
+
+
+@app.get("/api/pipeline/throughput")
+async def get_pipeline_throughput(minutes: int = 60):
+    from database import db as _db
+    return {"throughput": _db.get_pipeline_throughput(minutes=minutes)}
+
+
+@app.get("/api/pipeline/event/{event_id}")
+async def trace_event_pipeline(event_id: str):
+    from database import db as _db
+    stages = _db.get_event_pipeline(event_id)
+    return {"event_id": event_id, "stages": stages, "stage_count": len(stages)}
+
+
+@app.get("/api/pipeline/log/{log_id}")
+async def trace_log_pipeline(log_id: str):
+    from database import db as _db
+    stages = _db.get_log_pipeline(log_id)
+    return {"log_id": log_id, "stages": stages, "stage_count": len(stages)}
+
+
 class AssetCreate(BaseModel):
     hostname: str = Field(..., min_length=1, max_length=255)
     ip_address: str = Field(..., max_length=45)
