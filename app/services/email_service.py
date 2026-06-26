@@ -20,7 +20,7 @@ SMTP_FROM = os.environ.get("SMTP_FROM", "noreply@sentinelai.com")
 def send_otp_email(to_email: str, otp_code: str, expires_in: int = 300) -> bool:
     """Send OTP verification email. Returns True if sent successfully."""
     if not SMTP_HOST or not SMTP_USER:
-        logger.warning(f"[DEV MODE] OTP for {to_email}: {otp_code} (expires in {expires_in}s)")
+        logger.warning("OTP generated for %s (SMTP not configured, email not sent)", to_email)
         return True
     
     # Production: use smtplib or SendGrid

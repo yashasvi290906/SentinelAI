@@ -131,6 +131,16 @@ async def startup_scheduler():
     except Exception as e:
         log_structured("error", "system", f"Scheduler startup failed: {e}")
 
+
+@app.on_event("shutdown")
+async def shutdown_cleanup():
+    """Clean up resources on shutdown."""
+    try:
+        db.close()
+        log_structured("info", "system", "Database connection closed")
+    except Exception as e:
+        log_structured("warning", "system", f"Error closing database: {e}")
+
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 app.add_middleware(
     CORSMiddleware,

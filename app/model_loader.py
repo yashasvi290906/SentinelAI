@@ -1,6 +1,9 @@
 import numpy as np
 from collections import defaultdict, Counter
 from functools import lru_cache
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # =========================
@@ -21,11 +24,11 @@ ATTACK_WEIGHTS = {
 }
 
 # Model version
-MODEL_VERSION = "v2.1-deterministic"
+MODEL_VERSION = "v2.1-rule-based"
 
 
 # =========================
-# Deterministic ML Model
+# Rule-Based Prediction Engine
 # =========================
 TRAINING_SEQUENCES = [
     ["DDoS", "DDoS", "PortScan", "Bot", "WebAttack"],
@@ -51,8 +54,8 @@ TRAINING_SEQUENCES = [
 ]
 
 
-class DeterministicModel:
-    """Transition frequency table from training sequences."""
+class RuleBasedPredictor:
+    """Transition frequency table from training sequences. Rule-based prediction engine."""
 
     def __init__(self):
         self.n_classes = len(ATTACK_CLASSES)
@@ -155,7 +158,7 @@ class MarkovModel:
 # =========================
 # Build model (ONCE at startup)
 # =========================
-model = DeterministicModel()
+model = RuleBasedPredictor()
 le = MockEncoder()
 
 

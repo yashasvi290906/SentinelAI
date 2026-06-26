@@ -4,10 +4,19 @@ Integrates with AbuseIPDB, VirusTotal, Shodan, and NVD.
 Falls back to local data when API keys are not configured.
 """
 import os
-import httpx
+import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
+
+logger = logging.getLogger(__name__)
+
+try:
+    import httpx
+    HAS_HTTPX = True
+except ImportError:
+    HAS_HTTPX = False
+    logger.warning("httpx not installed — threat intelligence lookups will be limited")
 
 
 @dataclass
@@ -93,6 +102,8 @@ class ThreatIntelligenceService:
     
     async def search_cve(self, query: str, limit: int = 10) -> List[Dict]:
         """Search NVD for CVEs."""
+        if not HAS_HTTPX:
+            return []
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.get(self.nvd_api_base, params={
@@ -113,6 +124,8 @@ class ThreatIntelligenceService:
     
     async def _query_abuseipdb(self, ip: str) -> Dict[str, Any]:
         """Query AbuseIPDB for IP reputation."""
+        if not HAS_HTTPX:
+            return {'status': 'no_httpx'}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(
@@ -139,6 +152,8 @@ class ThreatIntelligenceService:
     
     async def _query_virustotal_ip(self, ip: str) -> Dict[str, Any]:
         """Query VirusTotal for IP analysis."""
+        if not HAS_HTTPX:
+            return {'status': 'no_httpx'}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(
@@ -163,6 +178,8 @@ class ThreatIntelligenceService:
     
     async def _query_virustotal_domain(self, domain: str) -> Dict[str, Any]:
         """Query VirusTotal for domain analysis."""
+        if not HAS_HTTPX:
+            return {'status': 'no_httpx'}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(
@@ -186,6 +203,8 @@ class ThreatIntelligenceService:
     
     async def _query_virustotal_hash(self, file_hash: str) -> Dict[str, Any]:
         """Query VirusTotal for file hash."""
+        if not HAS_HTTPX:
+            return {'status': 'no_httpx'}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(
@@ -210,6 +229,8 @@ class ThreatIntelligenceService:
     
     async def _query_shodan(self, ip: str) -> Dict[str, Any]:
         """Query Shodan for IP information."""
+        if not HAS_HTTPX:
+            return {'status': 'no_httpx'}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(f'https://api.shodan.io/shodan/host/{ip}?key={self.shodan_key}')

@@ -53,7 +53,7 @@ export default function RulePacks() {
   const [showTestPanel, setShowTestPanel] = useState(false);
   const [testRule, setTestRule] = useState<Rule | null>(null);
   const [testEvents, setTestEvents] = useState("[]");
-  const [testResult, setTestResult] = useState<{ matches: number; matched_events: any[] } | null>(null);
+  const [testResult, setTestResult] = useState<{ matches: number; matched_events: any[]; total_tested: number } | null>(null);
   const [filter, setFilter] = useState<"all" | "built-in" | "custom">("all");
   const [severityFilter, setSeverityFilter] = useState<string>("");
 
