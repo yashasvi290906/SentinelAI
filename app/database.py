@@ -1860,19 +1860,19 @@ class DatabaseManager:
             else:
                 cur.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
 
-    def create_uploaded_log(self, filename: str, source_type: str, user_id: str = None, file_size: int = 0) -> str:
+    def create_uploaded_log(self, filename: str, source_type: str, user_id: str = None, file_size: int = 0, organization_id: str = None) -> str:
         log_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         with self._cursor() as cur:
             if USE_POSTGRESQL:
                 cur.execute(
-                    "INSERT INTO uploaded_logs (id, user_id, filename, file_size, source_type, upload_time) VALUES (%s,%s,%s,%s,%s,%s)",
-                    (log_id, user_id, filename, file_size, source_type, now)
+                    "INSERT INTO uploaded_logs (id, user_id, filename, file_size, source_type, organization_id, upload_time) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                    (log_id, user_id, filename, file_size, source_type, organization_id, now)
                 )
             else:
                 cur.execute(
-                    "INSERT INTO uploaded_logs (id, user_id, filename, file_size, source_type, upload_time) VALUES (?,?,?,?,?,?)",
-                    (log_id, user_id, filename, file_size, source_type, now)
+                    "INSERT INTO uploaded_logs (id, user_id, filename, file_size, source_type, organization_id, upload_time) VALUES (?,?,?,?,?,?,?)",
+                    (log_id, user_id, filename, file_size, source_type, organization_id, now)
                 )
         return log_id
 
@@ -2543,7 +2543,8 @@ class DatabaseManager:
     def create_incident(self, title: str, severity: str, description: str = "",
                         alert_ids: list = None, timeline: list = None, affected_ips: list = None,
                         mitre_techniques: list = None, mitre_tactics: list = None,
-                        recommendations: list = None, confidence: float = 0.0) -> str:
+                        recommendations: list = None, confidence: float = 0.0,
+                        organization_id: str = None) -> str:
         incident_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         with self._cursor() as cur:
@@ -2551,24 +2552,24 @@ class DatabaseManager:
                 cur.execute("""
                     INSERT INTO incidents (id, title, severity, status, confidence, description,
                         alert_ids, timeline, affected_ips, mitre_techniques, mitre_tactics,
-                        recommendations, created_at, updated_at)
-                    VALUES (%s,%s,%s,'open',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        recommendations, organization_id, created_at, updated_at)
+                    VALUES (%s,%s,%s,'open',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (incident_id, title, severity, confidence, description,
                       json.dumps(alert_ids or []), json.dumps(timeline or []),
                       json.dumps(affected_ips or []), json.dumps(mitre_techniques or []),
                       json.dumps(mitre_tactics or []), json.dumps(recommendations or []),
-                      now, now))
+                      organization_id, now, now))
             else:
                 cur.execute("""
                     INSERT INTO incidents (id, title, severity, status, confidence, description,
                         alert_ids, timeline, affected_ips, mitre_techniques, mitre_tactics,
-                        recommendations, created_at, updated_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        recommendations, organization_id, created_at, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (incident_id, title, severity, confidence, description,
                       json.dumps(alert_ids or []), json.dumps(timeline or []),
                       json.dumps(affected_ips or []), json.dumps(mitre_techniques or []),
                       json.dumps(mitre_tactics or []), json.dumps(recommendations or []),
-                      now, now))
+                      organization_id, now, now))
         return incident_id
 
     def get_incidents(self, org_id: str = None, status: str = None, severity: str = None, limit: int = 100) -> List[Dict]:

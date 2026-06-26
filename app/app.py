@@ -51,6 +51,12 @@ async def require_auth(credentials: HTTPAuthorizationCredentials = Depends(secur
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     return payload
 
+def get_org_id(payload: dict) -> str:
+    return payload.get("org_id", "") or ""
+
+def get_user_email(payload: dict) -> str:
+    return payload.get("sub", "")
+
 
 # =========================
 # Production Logging
@@ -159,8 +165,28 @@ app.add_middleware(
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Organization-Id"],
 )
+
+# ── Auth Middleware: protects all /api/ routes ──
+AUTH_EXEMPT_PREFIXES = ("/auth/", "/health", "/ws/", "/api/orgs")
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and not any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES):
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse(status_code=401, content={"error": "Authentication required"})
+        token = auth_header[7:]
+        payload = verify_token(token)
+        if not payload:
+            return JSONResponse(status_code=401, content={"error": "Invalid or expired token"})
+        request.state.user = payload
+        request.state.org_id = payload.get("org_id", "")
+        request.state.user_email = payload.get("sub", "")
+    response = await call_next(request)
+    return response
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -1557,8 +1583,9 @@ threat_detector = ThreatDetector()
 # Log Upload Endpoint
 # =========================
 @app.post("/api/logs/upload")
-async def upload_log(file: UploadFile = File(...)):
+async def upload_log(file: UploadFile = File(...), request: Request = None):
     try:
+        org_id = getattr(request.state, 'org_id', '') if request else ''
         allowed_exts = {"txt", "csv", "json", "log", "evtx"}
         ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
         if ext not in allowed_exts:
@@ -1576,6 +1603,7 @@ async def upload_log(file: UploadFile = File(...)):
             filename=file.filename,
             source_type=ext,
             file_size=len(content),
+            organization_id=org_id,
         )
 
         # Pipeline tracking: ingested
@@ -1623,6 +1651,7 @@ async def upload_log(file: UploadFile = File(...)):
                 evidence=det.evidence,
                 recommendations=det.recommendations,
                 log_id=log_id,
+                org_id=org_id,
             )
             # Pipeline tracking: alert_created
             for eid, _ in ingest_stages[:1]:
@@ -1660,6 +1689,7 @@ async def upload_log(file: UploadFile = File(...)):
                         alert_ids=inc.alert_ids, timeline=inc.timeline, affected_ips=inc.affected_ips,
                         mitre_techniques=inc.mitre_techniques, mitre_tactics=inc.mitre_tactics,
                         recommendations=inc.recommendations, confidence=inc.confidence,
+                        organization_id=org_id,
                     )
                     # Pipeline tracking: correlated + incident_created
                     for eid, _ in ingest_stages[:1]:
@@ -2297,12 +2327,12 @@ async def ingest_batch(batch: IngestBatch):
     """Ingest a batch of events."""
     results = []
     for event in batch.events:
-        result = await _process_ingested_event(event, event.source or "unknown")
+        result = await _process_ingested_event(event, event.source or "unknown", organization_id=batch.organization_id)
         results.append(result)
     return {"ingested": len(results), "results": results}
 
 
-async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
+async def _process_ingested_event(event: IngestEvent, source: str, organization_id: str = "") -> dict:
     """Process a single ingested event: store, detect threats, broadcast, auto-correlate."""
     global _detection_counter
     _record_aps_event()  # Record for APS calculation
@@ -2316,6 +2346,7 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
         filename=f"ingest_{source}_{(event.timestamp or datetime.now(timezone.utc).isoformat())[:10]}",
         source_type=source,
         file_size=len(event.raw_log or event.message),
+        organization_id=organization_id,
     )
     db.insert_log_events(log_id, [event_dict])
 
@@ -2361,6 +2392,7 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
                 evidence=[e.get("message", "") for e in match.matched_events[:10]],
                 recommendations=match.recommendations,
                 log_id=log_id,
+                org_id=organization_id,
             )
             if alert:
                 created_alerts.append(alert)
@@ -2400,6 +2432,7 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
                 evidence=[],
                 recommendations=[],
                 log_id=log_id,
+                org_id=organization_id,
             )
             if alert:
                 created_alerts.append(alert)
@@ -2441,6 +2474,7 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
                         evidence=[f"Indicator matched from feed: {ioc_match.get('feed_name', '')}"],
                         recommendations=["Block IP immediately", "Investigate all connections from this IP"],
                         log_id=log_id,
+                        org_id=organization_id,
                     )
                     if alert:
                         created_alerts.append(alert)
@@ -2470,6 +2504,7 @@ async def _process_ingested_event(event: IngestEvent, source: str) -> dict:
                 evidence=det.evidence,
                 recommendations=det.recommendations,
                 log_id=log_id,
+                org_id=organization_id,
             )
             if alert:
                 created_alerts.append(alert)
@@ -2708,11 +2743,12 @@ async def add_incident_note(incident_id: str, request: Request):
     return {"note_id": note_id, "status": "created"}
 
 @app.post("/api/incidents/correlate")
-async def correlate_alerts():
+async def correlate_alerts(request: Request):
     """Run correlation engine on open alerts to create incidents."""
     from database import db
     from services.correlation_service import correlation_engine
 
+    org_id = getattr(request.state, 'org_id', '')
     alerts = db.get_alerts(status='open', limit=200)
     incidents = correlation_engine.correlate(alerts)
 
@@ -2723,6 +2759,7 @@ async def correlate_alerts():
             alert_ids=inc.alert_ids, timeline=inc.timeline, affected_ips=inc.affected_ips,
             mitre_techniques=inc.mitre_techniques, mitre_tactics=inc.mitre_tactics,
             recommendations=inc.recommendations, confidence=inc.confidence,
+            organization_id=org_id,
         )
         created.append(inc_id)
 

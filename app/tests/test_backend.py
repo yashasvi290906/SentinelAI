@@ -264,18 +264,22 @@ class TestAPIEndpoints:
     async def test_events_search_endpoint(self):
         import httpx
         import app as app_module
+        from auth import create_access_token
+        token = create_access_token({"sub": "test@test.com", "role": "analyst", "org_id": "test-org"})
         transport = httpx.ASGITransport(app=app_module.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.post("/api/events/search", json={"q": "test", "limit": 10})
+            response = await client.post("/api/events/search", json={"q": "test", "limit": 10}, headers={"Authorization": f"Bearer {token}"})
             assert response.status_code == 200
 
     @pytest.mark.anyio
     async def test_rule_packs_endpoint(self):
         import httpx
         import app as app_module
+        from auth import create_access_token
+        token = create_access_token({"sub": "test@test.com", "role": "analyst", "org_id": "test-org"})
         transport = httpx.ASGITransport(app=app_module.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/api/rule-packs")
+            response = await client.get("/api/rule-packs", headers={"Authorization": f"Bearer {token}"})
             assert response.status_code == 200
             data = response.json()
             assert "packs" in data
@@ -285,18 +289,22 @@ class TestAPIEndpoints:
     async def test_sigma_rules_endpoint(self):
         import httpx
         import app as app_module
+        from auth import create_access_token
+        token = create_access_token({"sub": "test@test.com", "role": "analyst", "org_id": "test-org"})
         transport = httpx.ASGITransport(app=app_module.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/api/sigma/rules")
+            response = await client.get("/api/sigma/rules", headers={"Authorization": f"Bearer {token}"})
             assert response.status_code == 200
 
     @pytest.mark.anyio
     async def test_threats_endpoint(self):
         import httpx
         import app as app_module
+        from auth import create_access_token
+        token = create_access_token({"sub": "test@test.com", "role": "analyst", "org_id": "test-org"})
         transport = httpx.ASGITransport(app=app_module.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/api/threats")
+            response = await client.get("/api/threats", headers={"Authorization": f"Bearer {token}"})
             assert response.status_code == 200
 
 

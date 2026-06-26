@@ -14,6 +14,15 @@ api.interceptors.request.use((config) => {
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    const user = localStorage.getItem("sentinelai_user");
+    if (user) {
+      try {
+        const parsed = JSON.parse(user);
+        if (parsed.organization_id) {
+          config.headers["X-Organization-Id"] = parsed.organization_id;
+        }
+      } catch { /* ignore */ }
+    }
   }
   return config;
 });
