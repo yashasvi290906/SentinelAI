@@ -113,7 +113,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd sentinelai-ui
-          npm ci
+          npm install
 
       - name: Build frontend
         env:
