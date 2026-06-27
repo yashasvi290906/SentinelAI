@@ -173,6 +173,8 @@ AUTH_EXEMPT_PREFIXES = ("/auth/", "/health", "/ws/", "/api/orgs")
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
     path = request.url.path
     if path.startswith("/api/") and not any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES):
         auth_header = request.headers.get("Authorization", "")
@@ -1402,7 +1404,7 @@ async def create_organization(request: Request):
     existing = db.get_organization_by_slug(slug)
     if existing:
         return JSONResponse(status_code=409, content={"error": "Slug already taken"})
-    org_id = db.create_organization(name, slug, description)
+    org_id = db.create_organization(name, slug)
     return {"organization_id": org_id, "name": name, "slug": slug}
 
 

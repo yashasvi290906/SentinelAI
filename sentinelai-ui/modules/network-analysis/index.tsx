@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { fetchWithAuth } from "@/lib/api";
 
 interface NetworkFlow {
   id: string;
@@ -98,11 +99,11 @@ export default function NetworkAnalysisModule() {
     setLoading(true);
     try {
       const [flowsRes, dnsRes, httpRes, anomRes, statsRes] = await Promise.all([
-        fetch('/api/network/flows'),
-        fetch('/api/network/dns'),
-        fetch('/api/network/http'),
-        fetch('/api/network/anomalies'),
-        fetch('/api/network/stats'),
+        fetchWithAuth('/api/network/flows'),
+        fetchWithAuth('/api/network/dns'),
+        fetchWithAuth('/api/network/http'),
+        fetchWithAuth('/api/network/anomalies'),
+        fetchWithAuth('/api/network/stats'),
       ]);
       const flowsData = await flowsRes.json();
       const dnsData = await dnsRes.json();

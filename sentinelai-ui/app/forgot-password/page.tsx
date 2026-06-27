@@ -14,7 +14,7 @@ function ForgotPasswordForm() {
   const flowParam = searchParams.get("flow");
 
   const [step, setStep] = useState<Step>(flowParam === "verify-otp" ? "otp" : "email");
-  const [email, setEmail] = useState(sessionStorage.getItem("sentinelai_signup_email") || "");
+  const [email, setEmail] = useState(() => typeof window !== 'undefined' ? sessionStorage.getItem("sentinelai_signup_email") || "" : "");
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [verifiedOtp, setVerifiedOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");

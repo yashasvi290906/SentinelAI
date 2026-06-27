@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Server, Shield, AlertTriangle, Wifi, WifiOff, Clock, Activity } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
+import { fetchWithAuth } from "@/lib/api";
 
 interface Device {
   id: string;
@@ -22,7 +23,7 @@ export default function DevicesModule() {
   const fetchDevices = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/devices');
+      const res = await fetchWithAuth('/api/devices');
       const data = await res.json();
       setDevices(data.devices || []);
     } catch (e) {

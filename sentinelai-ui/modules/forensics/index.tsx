@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { fetchWithAuth } from "@/lib/api";
 
 interface Evidence {
   id: string;
@@ -67,12 +68,12 @@ export default function ForensicsModule() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const evRes = await fetch('/api/forensics/evidence');
+      const evRes = await fetchWithAuth('/api/forensics/evidence');
       const evData = await evRes.json();
       setEvidence(evData.evidence || []);
 
       if (evData.evidence?.length > 0) {
-        const tlRes = await fetch(`/api/forensics/timeline/${evData.evidence[0].id}`);
+        const tlRes = await fetchWithAuth(`/api/forensics/timeline/${evData.evidence[0].id}`);
         const tlData = await tlRes.json();
         setTimeline(tlData.timeline || []);
       }
@@ -87,7 +88,7 @@ export default function ForensicsModule() {
   const handleCollect = async () => {
     if (!newEvidence.description) return;
     try {
-      await fetch('/api/forensics/evidence', {
+      await fetchWithAuth('/api/forensics/evidence', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newEvidence),
@@ -104,7 +105,7 @@ export default function ForensicsModule() {
     setVerifying(true);
     setVerifyResult(null);
     try {
-      const res = await fetch(`/api/forensics/evidence/${evId}/verify`);
+      const res = await fetchWithAuth(`/api/forensics/evidence/${evId}/verify`);
       const data = await res.json();
       setVerifyResult(data);
     } catch {
@@ -115,7 +116,7 @@ export default function ForensicsModule() {
 
   const loadTimeline = async (evId: string) => {
     try {
-      const res = await fetch(`/api/forensics/timeline/${evId}`);
+      const res = await fetchWithAuth(`/api/forensics/timeline/${evId}`);
       const data = await res.json();
       setTimeline(data.timeline || []);
     } catch {

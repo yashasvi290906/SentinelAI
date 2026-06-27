@@ -268,6 +268,7 @@ class DatabaseManager:
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 );
+                CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
 
                 CREATE TABLE IF NOT EXISTS audit_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -327,6 +328,10 @@ class DatabaseManager:
                     FOREIGN KEY (log_id) REFERENCES uploaded_logs(id),
                     FOREIGN KEY (device_id) REFERENCES devices(id)
                 );
+                CREATE INDEX IF NOT EXISTS idx_alerts_org_id ON alerts(organization_id);
+                CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
+                CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
+                CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
 
                 CREATE TABLE IF NOT EXISTS investigation_notes (
                     id TEXT PRIMARY KEY,
@@ -337,6 +342,7 @@ class DatabaseManager:
                     FOREIGN KEY (alert_id) REFERENCES alerts(id),
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 );
+                CREATE INDEX IF NOT EXISTS idx_investigation_notes_alert_id ON investigation_notes(alert_id);
 
                 CREATE TABLE IF NOT EXISTS incidents (
                     id TEXT PRIMARY KEY,
@@ -352,9 +358,14 @@ class DatabaseManager:
                     mitre_tactics TEXT DEFAULT '[]',
                     recommendations TEXT DEFAULT '[]',
                     assigned_to TEXT,
+                    organization_id TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT
                 );
+                CREATE INDEX IF NOT EXISTS idx_incidents_org_id ON incidents(organization_id);
+                CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+                CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity);
+                CREATE INDEX IF NOT EXISTS idx_incidents_created_at ON incidents(created_at);
 
                 CREATE TABLE IF NOT EXISTS incident_notes (
                     id TEXT PRIMARY KEY,
@@ -364,6 +375,7 @@ class DatabaseManager:
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (incident_id) REFERENCES incidents(id)
                 );
+                CREATE INDEX IF NOT EXISTS idx_incident_notes_incident_id ON incident_notes(incident_id);
 
                 CREATE TABLE IF NOT EXISTS assets (
                     id TEXT PRIMARY KEY,
@@ -384,6 +396,7 @@ class DatabaseManager:
                     metadata TEXT DEFAULT '{}',
                     FOREIGN KEY (organization_id) REFERENCES organizations(id)
                 );
+                CREATE INDEX IF NOT EXISTS idx_assets_org_id ON assets(organization_id);
 
                 CREATE TABLE IF NOT EXISTS ioc (
                     id TEXT PRIMARY KEY,
@@ -402,6 +415,7 @@ class DatabaseManager:
                     updated_at TEXT,
                     FOREIGN KEY (organization_id) REFERENCES organizations(id)
                 );
+                CREATE INDEX IF NOT EXISTS idx_ioc_indicator_value ON ioc(indicator_value);
 
                 CREATE TABLE IF NOT EXISTS detection_rules (
                     id TEXT PRIMARY KEY,
@@ -689,6 +703,7 @@ class DatabaseManager:
                     metadata TEXT DEFAULT '{}',
                     created_at TEXT
                 );
+                CREATE INDEX IF NOT EXISTS idx_evidence_incident_id ON evidence(incident_id);
 
                 CREATE TABLE IF NOT EXISTS evidence_chain (
                     id TEXT PRIMARY KEY,
@@ -717,6 +732,7 @@ class DatabaseManager:
                     metadata TEXT DEFAULT '{}',
                     created_at TEXT
                 );
+                CREATE INDEX IF NOT EXISTS idx_forensic_timeline_incident_id ON forensic_timeline(incident_id);
 
                 CREATE TABLE IF NOT EXISTS nist_controls (
                     id TEXT PRIMARY KEY,
@@ -1032,6 +1048,7 @@ class DatabaseManager:
                     read BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
+                CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
 
                 CREATE TABLE IF NOT EXISTS audit_log (
                     id SERIAL PRIMARY KEY,
@@ -1087,6 +1104,10 @@ class DatabaseManager:
                     updated_at TIMESTAMPTZ,
                     resolved_at TIMESTAMPTZ
                 );
+                CREATE INDEX IF NOT EXISTS idx_alerts_org_id ON alerts(organization_id);
+                CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
+                CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
+                CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
 
                 CREATE TABLE IF NOT EXISTS investigation_notes (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1095,6 +1116,7 @@ class DatabaseManager:
                     note TEXT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
+                CREATE INDEX IF NOT EXISTS idx_investigation_notes_alert_id ON investigation_notes(alert_id);
 
                 CREATE TABLE IF NOT EXISTS incidents (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1110,9 +1132,14 @@ class DatabaseManager:
                     mitre_tactics JSONB DEFAULT '[]',
                     recommendations JSONB DEFAULT '[]',
                     assigned_to UUID,
+                    organization_id VARCHAR(255),
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ
                 );
+                CREATE INDEX IF NOT EXISTS idx_incidents_org_id ON incidents(organization_id);
+                CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+                CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity);
+                CREATE INDEX IF NOT EXISTS idx_incidents_created_at ON incidents(created_at);
 
                 CREATE TABLE IF NOT EXISTS incident_notes (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1121,6 +1148,7 @@ class DatabaseManager:
                     note TEXT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
+                CREATE INDEX IF NOT EXISTS idx_incident_notes_incident_id ON incident_notes(incident_id);
 
                 CREATE TABLE IF NOT EXISTS assets (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1140,6 +1168,7 @@ class DatabaseManager:
                     updated_at TIMESTAMPTZ,
                     metadata JSONB DEFAULT '{}'
                 );
+                CREATE INDEX IF NOT EXISTS idx_assets_org_id ON assets(organization_id);
 
                 CREATE TABLE IF NOT EXISTS ioc (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1157,6 +1186,7 @@ class DatabaseManager:
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ
                 );
+                CREATE INDEX IF NOT EXISTS idx_ioc_indicator_value ON ioc(indicator_value);
 
                 CREATE TABLE IF NOT EXISTS detection_rules (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1440,6 +1470,7 @@ class DatabaseManager:
                     metadata TEXT DEFAULT '{}',
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 );
+                CREATE INDEX IF NOT EXISTS idx_evidence_incident_id ON evidence(incident_id);
 
                 CREATE TABLE IF NOT EXISTS evidence_chain (
                     id TEXT PRIMARY KEY,
@@ -1467,6 +1498,7 @@ class DatabaseManager:
                     metadata TEXT DEFAULT '{}',
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 );
+                CREATE INDEX IF NOT EXISTS idx_forensic_timeline_incident_id ON forensic_timeline(incident_id);
 
                 CREATE TABLE IF NOT EXISTS nist_controls (
                     id TEXT PRIMARY KEY,
@@ -1667,18 +1699,6 @@ class DatabaseManager:
                 pass
 
     # ── Organization Management ──
-
-    def create_organization(self, name: str, slug: str, description: str = "") -> str:
-        org_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
-        with self._cursor() as cur:
-            if USE_POSTGRESQL:
-                cur.execute("INSERT INTO organizations (id, name, slug, description, created_at) VALUES (%s,%s,%s,%s,%s)",
-                    (org_id, name, slug, description, now))
-            else:
-                cur.execute("INSERT INTO organizations (id, name, slug, description, created_at) VALUES (?,?,?,?,?)",
-                    (org_id, name, slug, description, now))
-        return org_id
 
     def get_organization(self, org_id: str) -> Optional[Dict]:
         with self._cursor() as cur:

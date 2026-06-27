@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { fetchWithAuth } from "@/lib/api";
 
 interface SigmaRule {
   id: string;
@@ -72,9 +73,9 @@ export default function SigmaRulesModule() {
     setLoading(true);
     try {
       const [rulesRes, statsRes, matchesRes] = await Promise.all([
-        fetch('/api/sigma/rules'),
-        fetch('/api/sigma/stats'),
-        fetch('/api/sigma/matches'),
+        fetchWithAuth('/api/sigma/rules'),
+        fetchWithAuth('/api/sigma/stats'),
+        fetchWithAuth('/api/sigma/matches'),
       ]);
       const rulesData = await rulesRes.json();
       const statsData = await statsRes.json();
@@ -103,7 +104,7 @@ export default function SigmaRulesModule() {
     if (!importYaml.trim()) return;
     setImporting(true);
     try {
-      await fetch('/api/sigma/rules/import', {
+      await fetchWithAuth('/api/sigma/rules/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ yaml: importYaml }),

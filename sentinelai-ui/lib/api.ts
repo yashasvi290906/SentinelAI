@@ -544,3 +544,27 @@ export async function getAgentHealthAPI() {
   const res = await api.get('/api/agents/health');
   return res.data;
 }
+
+// ── Authenticated fetch wrapper ──
+export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("sentinelai_access_token");
+    if (token && !headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    const user = localStorage.getItem("sentinelai_user");
+    if (user && !headers.has("X-Organization-Id")) {
+      try {
+        const parsed = JSON.parse(user);
+        if (parsed.organization_id) {
+          headers.set("X-Organization-Id", parsed.organization_id);
+        }
+      } catch { /* ignore */ }
+    }
+    if (!headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+  }
+  return fetch(url, { ...init, headers });
+}

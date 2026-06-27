@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { fetchWithAuth } from "@/lib/api";
 
 interface Playbook {
   id: string;
@@ -83,8 +84,8 @@ export default function PlaybooksModule() {
     setLoading(true);
     try {
       const [pbRes, exRes] = await Promise.all([
-        fetch('/api/playbooks'),
-        fetch('/api/playbooks/executions'),
+        fetchWithAuth('/api/playbooks'),
+        fetchWithAuth('/api/playbooks/executions'),
       ]);
       const pbData = await pbRes.json();
       const exData = await exRes.json();
@@ -101,7 +102,7 @@ export default function PlaybooksModule() {
   const handleCreate = async () => {
     if (!newPlaybook.name) return;
     try {
-      await fetch('/api/playbooks', {
+      await fetchWithAuth('/api/playbooks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -121,7 +122,7 @@ export default function PlaybooksModule() {
     if (!showExecute) return;
     setExecuting(true);
     try {
-      await fetch(`/api/playbooks/${showExecute.id}/execute`, {
+      await fetchWithAuth(`/api/playbooks/${showExecute.id}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ trigger_data: triggerData }),

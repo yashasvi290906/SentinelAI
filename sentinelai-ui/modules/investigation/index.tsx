@@ -6,6 +6,7 @@ import {
   ChevronRight, ExternalLink, Loader2, Plus, Send
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
+import { fetchWithAuth } from "@/lib/api";
 
 interface Alert {
   id: string;
@@ -47,7 +48,7 @@ export default function InvestigationWorkspace() {
       const params = new URLSearchParams();
       if (filter.severity) params.set('severity', filter.severity);
       if (filter.status) params.set('status', filter.status);
-      const res = await fetch(`/api/alerts?${params.toString()}`);
+      const res = await fetchWithAuth(`/api/alerts?${params.toString()}`);
       const data = await res.json();
       setAlerts(data.alerts || []);
     } catch (e) {
@@ -58,7 +59,7 @@ export default function InvestigationWorkspace() {
 
   const fetchNotes = useCallback(async (alertId: string) => {
     try {
-      const res = await fetch(`/api/alerts/${alertId}/notes`);
+      const res = await fetchWithAuth(`/api/alerts/${alertId}/notes`);
       const data = await res.json();
       setNotes(data.notes || []);
     } catch (e) {
@@ -72,7 +73,7 @@ export default function InvestigationWorkspace() {
   const addNote = async () => {
     if (!newNote.trim() || !selectedAlert) return;
     try {
-      await fetch(`/api/alerts/${selectedAlert.id}/notes`, {
+      await fetchWithAuth(`/api/alerts/${selectedAlert.id}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ note: newNote }),
@@ -86,7 +87,7 @@ export default function InvestigationWorkspace() {
 
   const updateStatus = async (alertId: string, status: string) => {
     try {
-      await fetch(`/api/alerts/${alertId}/status`, {
+      await fetchWithAuth(`/api/alerts/${alertId}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),

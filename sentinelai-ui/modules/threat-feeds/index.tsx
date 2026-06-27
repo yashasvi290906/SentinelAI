@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { fetchWithAuth } from "@/lib/api";
 
 interface ThreatFeed {
   id: string;
@@ -82,9 +83,9 @@ export default function ThreatFeedsModule() {
     setLoading(true);
     try {
       const [feedsRes, objectsRes, indRes] = await Promise.all([
-        fetch('/api/feeds'),
-        fetch('/api/stix/objects'),
-        fetch('/api/stix/indicators'),
+        fetchWithAuth('/api/feeds'),
+        fetchWithAuth('/api/stix/objects'),
+        fetchWithAuth('/api/stix/indicators'),
       ]);
       const feedsData = await feedsRes.json();
       const objectsData = await objectsRes.json();
@@ -103,7 +104,7 @@ export default function ThreatFeedsModule() {
   const handleAddFeed = async () => {
     if (!newFeed.name || !newFeed.url) return;
     try {
-      await fetch('/api/feeds', {
+      await fetchWithAuth('/api/feeds', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newFeed),
@@ -118,7 +119,7 @@ export default function ThreatFeedsModule() {
 
   const toggleFeed = async (feedId: string, enabled: boolean) => {
     try {
-      await fetch(`/api/feeds/${feedId}/toggle`, {
+      await fetchWithAuth(`/api/feeds/${feedId}/toggle`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: !enabled }),
@@ -134,7 +135,7 @@ export default function ThreatFeedsModule() {
     setCheckingIoc(true);
     setIocResult(null);
     try {
-      const res = await fetch(`/api/stix/match/${encodeURIComponent(iocInput.trim())}`);
+      const res = await fetchWithAuth(`/api/stix/match/${encodeURIComponent(iocInput.trim())}`);
       const data = await res.json();
       setIocResult(data);
     } catch {

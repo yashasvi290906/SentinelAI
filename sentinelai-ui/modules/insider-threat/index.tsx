@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { fetchWithAuth } from "@/lib/api";
 
 interface RiskScore {
   user_id: string;
@@ -81,10 +82,10 @@ export default function InsiderThreatModule() {
     setLoading(true);
     try {
       const [riskRes, anomRes, baseRes, caseRes] = await Promise.all([
-        fetch('/api/insider/risk-scores'),
-        fetch('/api/insider/anomalies'),
-        fetch('/api/insider/baselines'),
-        fetch('/api/insider/cases'),
+        fetchWithAuth('/api/insider/risk-scores'),
+        fetchWithAuth('/api/insider/anomalies'),
+        fetchWithAuth('/api/insider/baselines'),
+        fetchWithAuth('/api/insider/cases'),
       ]);
       const riskData = await riskRes.json();
       const anomData = await anomRes.json();
@@ -105,7 +106,7 @@ export default function InsiderThreatModule() {
   const handleCreateCase = async () => {
     if (!newCase.user_id) return;
     try {
-      await fetch('/api/insider/cases', {
+      await fetchWithAuth('/api/insider/cases', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newCase),

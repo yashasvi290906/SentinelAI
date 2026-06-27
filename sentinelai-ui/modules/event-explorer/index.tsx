@@ -8,6 +8,7 @@ import {
   SlidersHorizontal, ArrowUpDown, RefreshCw, Trash2, Eye, Copy,
   Calendar, Globe, Server, FileText, ChevronUp
 } from "lucide-react";
+import { fetchWithAuth } from "@/lib/api";
 
 interface SearchFilter {
   field: string;
@@ -142,7 +143,7 @@ export default function EventExplorer() {
         sort_order: sortOrder,
       };
 
-      const res = await fetch("/api/events/search", {
+      const res = await fetchWithAuth("/api/events/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -169,7 +170,7 @@ export default function EventExplorer() {
 
   const loadSavedSearches = async () => {
     try {
-      const res = await fetch("/api/hunt/saved");
+      const res = await fetchWithAuth("/api/hunt/saved");
       const data = await res.json();
       setSavedSearches(data.searches || []);
     } catch {}
@@ -177,7 +178,7 @@ export default function EventExplorer() {
 
   const loadBookmarks = async () => {
     try {
-      const res = await fetch("/api/events/bookmarks");
+      const res = await fetchWithAuth("/api/events/bookmarks");
       const data = await res.json();
       setBookmarks(data.bookmarks || []);
     } catch {}
@@ -186,7 +187,7 @@ export default function EventExplorer() {
   const saveSearch = async () => {
     if (!saveName) return;
     try {
-      await fetch("/api/hunt/saved", {
+      await fetchWithAuth("/api/hunt/saved", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: saveName, query, filters }),
@@ -199,7 +200,7 @@ export default function EventExplorer() {
 
   const deleteSavedSearch = async (id: string) => {
     try {
-      await fetch(`/api/hunt/saved/${id}`, { method: "DELETE" });
+      await fetchWithAuth(`/api/hunt/saved/${id}`, { method: "DELETE" });
       loadSavedSearches();
     } catch {}
   };
@@ -216,7 +217,7 @@ export default function EventExplorer() {
 
   const addBookmark = async (eventType: string, eventId: string) => {
     try {
-      await fetch("/api/events/bookmarks", {
+      await fetchWithAuth("/api/events/bookmarks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ event_type: eventType, event_id: eventId }),
@@ -227,14 +228,14 @@ export default function EventExplorer() {
 
   const removeBookmark = async (id: string) => {
     try {
-      await fetch(`/api/events/bookmarks/${id}`, { method: "DELETE" });
+      await fetchWithAuth(`/api/events/bookmarks/${id}`, { method: "DELETE" });
       loadBookmarks();
     } catch {}
   };
 
   const exportResults = async () => {
     try {
-      const res = await fetch(`/api/events/export?format=${exportFormat}&limit=5000`);
+      const res = await fetchWithAuth(`/api/events/export?format=${exportFormat}&limit=5000`);
       if (exportFormat === "csv") {
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);

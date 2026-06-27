@@ -7,6 +7,7 @@ import {
   Trash2, Eye, EyeOff, ChevronDown, ChevronRight, FileCode,
   TestTube, RefreshCw, Download, Upload, Filter
 } from "lucide-react";
+import { fetchWithAuth } from "@/lib/api";
 
 interface RulePack {
   id: string;
@@ -60,7 +61,7 @@ export default function RulePacks() {
   const fetchPacks = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/rule-packs");
+      const res = await fetchWithAuth("/api/rule-packs");
       const data = await res.json();
       setPacks(data.packs || []);
     } catch (err) {
@@ -72,7 +73,7 @@ export default function RulePacks() {
 
   const fetchPackDetail = async (packId: string) => {
     try {
-      const res = await fetch(`/api/rule-packs/${packId}`);
+      const res = await fetchWithAuth(`/api/rule-packs/${packId}`);
       const data = await res.json();
       setSelectedPack(data);
     } catch (err) {
@@ -82,7 +83,7 @@ export default function RulePacks() {
 
   const togglePack = async (packId: string) => {
     try {
-      await fetch(`/api/rule-packs/${packId}/toggle`, { method: "POST" });
+      await fetchWithAuth(`/api/rule-packs/${packId}/toggle`, { method: "POST" });
       fetchPacks();
       if (selectedPack?.id === packId) {
         fetchPackDetail(packId);
@@ -93,7 +94,7 @@ export default function RulePacks() {
   const deletePack = async (packId: string) => {
     if (!confirm("Delete this custom rule pack?")) return;
     try {
-      await fetch(`/api/rule-packs/${packId}`, { method: "DELETE" });
+      await fetchWithAuth(`/api/rule-packs/${packId}`, { method: "DELETE" });
       if (selectedPack?.id === packId) setSelectedPack(null);
       fetchPacks();
     } catch {}
@@ -103,7 +104,7 @@ export default function RulePacks() {
     if (!testRule) return;
     try {
       const events = JSON.parse(testEvents);
-      const res = await fetch("/api/rule-packs/test", {
+      const res = await fetchWithAuth("/api/rule-packs/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rule: testRule, events }),

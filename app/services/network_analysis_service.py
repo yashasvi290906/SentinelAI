@@ -983,17 +983,21 @@ class NetworkAnalysisEngine:
             try:
                 with db._cursor() as cur:
                     cur.execute(
-                        "INSERT INTO network_flows (id, timestamp, src_ip, dst_ip, src_port, dst_port, protocol, packets, bytes_transferred, duration, metadata) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        "INSERT INTO network_flows (id, timestamp, src_ip, dst_ip, src_port, dst_port, protocol, bytes_sent, bytes_received, packets_sent, packets_received, flow_duration_ms, flags, application, source, device_id, created_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (flow_id, ts, flow.get("src_ip", ""), flow.get("dst_ip", ""),
-                         flow.get("src_port", 0), flow.get("dst_port", 0),
-                         flow.get("protocol", flow.get("proto", "")),
-                         flow.get("packets", flow.get("orig_pkts", 0)),
-                         flow.get("octets", flow.get("orig_bytes", 0)),
-                         flow.get("duration", 0.0),
-                         json.dumps({k: v for k, v in flow.items() if k not in
-                                     ("src_ip", "dst_ip", "src_port", "dst_port", "protocol", "proto",
-                                      "packets", "octets", "orig_bytes", "duration", "ts", "_type")}))
+                         int(flow.get("src_port", 0) or 0), int(flow.get("dst_port", 0) or 0),
+                         int(flow.get("protocol", flow.get("proto", 0)) or 0),
+                         flow.get("octets", flow.get("orig_bytes", 0)) or 0,
+                         flow.get("octets", flow.get("orig_bytes", 0)) or 0,
+                         flow.get("packets", flow.get("orig_pkts", 0)) or 0,
+                         0,
+                         int(flow.get("duration", 0) * 1000 if isinstance(flow.get("duration", 0), float) else flow.get("duration", 0) or 0),
+                         flow.get("flags", ""),
+                         flow.get("application", ""),
+                         "",
+                         flow.get("device_id", ""),
+                         ts)
                     )
                 stored += 1
             except Exception as e:
@@ -1010,13 +1014,15 @@ class NetworkAnalysisEngine:
             try:
                 with db._cursor() as cur:
                     cur.execute(
-                        "INSERT INTO dns_queries (id, timestamp, src_ip, query, query_type, response_code, answers, ttl, metadata) "
-                        "VALUES (?,?,?,?,?,?,?,?,?)",
-                        (record_id, ts, record.get("src_ip", ""), record.get("query", ""),
-                         record.get("qtype_name", ""), record.get("rcode_name", ""),
-                         record.get("answers", ""), 0,
-                         json.dumps({k: v for k, v in record.items() if k not in
-                                     ("ts", "src_ip", "query", "qtype_name", "rcode_name", "answers", "_type")}))
+                        "INSERT INTO dns_queries (id, timestamp, src_ip, query_name, query_type, response_code, response_data, resolved, ttl, source, created_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (record_id, ts, record.get("src_ip", ""),
+                         record.get("query", record.get("query_name", "")),
+                         record.get("qtype_name", record.get("query_type", "")),
+                         record.get("rcode_name", record.get("response_code", "")),
+                         json.dumps(record.get("answers", record.get("response_data", []))),
+                         1, record.get("ttl", 0),
+                         "", ts)
                     )
                 stored += 1
             except Exception as e:
@@ -1033,16 +1039,20 @@ class NetworkAnalysisEngine:
             try:
                 with db._cursor() as cur:
                     cur.execute(
-                        "INSERT INTO http_metadata (id, timestamp, src_ip, dst_ip, host, uri, method, user_agent, status_code, request_bytes, response_bytes, metadata) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "INSERT INTO http_metadata (id, timestamp, src_ip, dst_ip, dst_port, method, host, uri, user_agent, status_code, response_size, content_type, tls_version, ja3_hash, source, created_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (record_id, ts, record.get("src_ip", ""), record.get("dst_ip", ""),
-                         record.get("host", ""), record.get("uri", ""),
-                         record.get("method", ""), record.get("user_agent", ""),
-                         record.get("status_code", 0), record.get("request_body_len", 0),
-                         record.get("response_body_len", 0),
-                         json.dumps({k: v for k, v in record.items() if k not in
-                                     ("ts", "src_ip", "dst_ip", "host", "uri", "method",
-                                      "user_agent", "status_code", "request_body_len", "response_body_len", "_type")}))
+                         int(record.get("dst_port", 80) or 80),
+                         record.get("method", ""),
+                         record.get("host", ""),
+                         record.get("uri", ""),
+                         record.get("user_agent", ""),
+                         int(record.get("status_code", 0) or 0),
+                         int(record.get("response_body_len", record.get("response_size", 0)) or 0),
+                         record.get("content_type", ""),
+                         record.get("tls_version", ""),
+                         record.get("ja3_hash", ""),
+                         "", ts)
                     )
                 stored += 1
             except Exception as e:
@@ -1057,18 +1067,17 @@ class NetworkAnalysisEngine:
             try:
                 with db._cursor() as cur:
                     cur.execute(
-                        "INSERT INTO network_anomalies (id, timestamp, anomaly_type, severity, confidence, description, evidence, mitre_technique, mitre_tactic, source_ip, dest_ip, dest_port, metadata) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (anomaly_id, ts, anomaly.get("type", ""),
+                        "INSERT INTO network_anomalies (id, anomaly_type, severity, confidence, src_ip, dst_ip, description, evidence, mitre_technique, mitre_tactic, detected_at, resolved) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (anomaly_id, anomaly.get("type", ""),
                          anomaly.get("severity", "INFO"), anomaly.get("confidence", 0.0),
+                         anomaly.get("src_ip", anomaly.get("evidence", {}).get("src_ip", "")),
+                         anomaly.get("dst_ip", anomaly.get("evidence", {}).get("dst_ip", "")),
                          anomaly.get("description", ""),
                          json.dumps(anomaly.get("evidence", {})),
                          anomaly.get("mitre_technique", ""),
                          anomaly.get("mitre_tactic", ""),
-                         anomaly.get("evidence", {}).get("src_ip", ""),
-                         anomaly.get("evidence", {}).get("dst_ip", ""),
-                         anomaly.get("evidence", {}).get("dst_port", 0),
-                         json.dumps({"source": source}))
+                         ts, 0)
                     )
                 stored += 1
             except Exception as e:

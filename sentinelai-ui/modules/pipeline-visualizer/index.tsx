@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import GlassCard from "@/components/ui/GlassCard";
+import { fetchWithAuth } from "@/lib/api";
 import {
   Database, Filter, Shield, Brain, Link, Bell, AlertTriangle,
   FileText, ArrowRight, Activity, Layers, Clock, Search,
@@ -60,8 +61,8 @@ export default function PipelineVisualizer() {
   const fetchData = useCallback(async () => {
     try {
       const [sumRes, metRes] = await Promise.all([
-        fetch("/api/pipeline/summary"),
-        fetch("/api/pipeline/metrics"),
+        fetchWithAuth("/api/pipeline/summary"),
+        fetchWithAuth("/api/pipeline/metrics"),
       ]);
       const sumData = await sumRes.json();
       const metData = await metRes.json();
@@ -83,7 +84,7 @@ export default function PipelineVisualizer() {
     if (!traceId.trim()) return;
     setTracing(true);
     try {
-      const res = await fetch(`/api/pipeline/event/${traceId}`);
+      const res = await fetchWithAuth(`/api/pipeline/event/${traceId}`);
       if (res.ok) {
         const data = await res.json();
         setEventTrace(data);

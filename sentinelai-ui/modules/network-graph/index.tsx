@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import ReactFlow, {
   Background,
   Controls,
@@ -71,9 +71,8 @@ function CustomNode({ data }: { data: { label: string; confidence: number; sever
   );
 }
 
-const nodeTypes = { customNode: CustomNode };
-
 export default function NetworkGraph() {
+  const nodeTypes = useMemo(() => ({ customNode: CustomNode }), []);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [loading, setLoading] = useState(true);

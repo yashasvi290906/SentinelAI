@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { fetchWithAuth } from "@/lib/api";
 
 interface ComplianceScore {
   overall_score: number;
@@ -103,11 +104,11 @@ export default function ComplianceModule() {
     setLoading(true);
     try {
       const [scoreRes, famRes, ctrlRes, gapsRes, assessRes] = await Promise.all([
-        fetch('/api/compliance/score'),
-        fetch('/api/compliance/controls'),
-        fetch('/api/compliance/controls'),
-        fetch('/api/compliance/gaps'),
-        fetch('/api/compliance/assessments'),
+        fetchWithAuth('/api/compliance/score'),
+        fetchWithAuth('/api/compliance/controls'),
+        fetchWithAuth('/api/compliance/controls'),
+        fetchWithAuth('/api/compliance/gaps'),
+        fetchWithAuth('/api/compliance/assessments'),
       ]);
       const scoreData = await scoreRes.json();
       const famData = await famRes.json();
@@ -130,7 +131,7 @@ export default function ComplianceModule() {
   const runAssessment = async () => {
     setAssessing(true);
     try {
-      await fetch('/api/compliance/assess', { method: 'POST' });
+      await fetchWithAuth('/api/compliance/assess', { method: 'POST' });
       fetchData();
     } catch {
       console.error('Failed to run assessment');

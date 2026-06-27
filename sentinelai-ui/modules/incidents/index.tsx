@@ -8,6 +8,7 @@ import {
   ShieldAlert, Eye, Target, Timer
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
+import { fetchWithAuth } from "@/lib/api";
 
 interface Incident {
   id: string;
@@ -116,8 +117,8 @@ export default function IncidentsModule() {
       if (filter.severity) params.set('severity', filter.severity);
       if (filter.status) params.set('status', filter.status);
       const [incRes, statsRes] = await Promise.all([
-        fetch(`/api/incidents?${params.toString()}`),
-        fetch('/api/incidents/stats'),
+        fetchWithAuth(`/api/incidents?${params.toString()}`),
+        fetchWithAuth('/api/incidents/stats'),
       ]);
       const incData = await incRes.json();
       const statsData = await statsRes.json();
@@ -131,7 +132,7 @@ export default function IncidentsModule() {
 
   const fetchIncidentDetail = useCallback(async (incidentId: string) => {
     try {
-      const res = await fetch(`/api/incidents/${incidentId}/detail`);
+      const res = await fetchWithAuth(`/api/incidents/${incidentId}/detail`);
       if (res.ok) {
         const data = await res.json();
         setSelectedIncident(data);
@@ -148,7 +149,7 @@ export default function IncidentsModule() {
   const runCorrelation = async () => {
     setCorrelating(true);
     try {
-      const res = await fetch('/api/incidents/correlate', { method: 'POST' });
+      const res = await fetchWithAuth('/api/incidents/correlate', { method: 'POST' });
       const data = await res.json();
       alert(`Created ${data.correlated} incidents from correlated alerts`);
       fetchIncidents();
@@ -158,7 +159,7 @@ export default function IncidentsModule() {
 
   const updateStatus = async (incidentId: string, status: string) => {
     try {
-      await fetch(`/api/incidents/${incidentId}/status`, {
+      await fetchWithAuth(`/api/incidents/${incidentId}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
@@ -170,7 +171,7 @@ export default function IncidentsModule() {
 
   const escalateIncident = async (incidentId: string) => {
     try {
-      const res = await fetch(`/api/incidents/${incidentId}/escalate`, { method: 'POST' });
+      const res = await fetchWithAuth(`/api/incidents/${incidentId}/escalate`, { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         alert(`Escalated: ${data.previous_severity} → ${data.new_severity}`);
@@ -185,7 +186,7 @@ export default function IncidentsModule() {
   const archiveIncident = async (incidentId: string) => {
     if (!confirm('Archive this incident?')) return;
     try {
-      await fetch(`/api/incidents/${incidentId}`, { method: 'DELETE' });
+      await fetchWithAuth(`/api/incidents/${incidentId}`, { method: 'DELETE' });
       setSelectedIncident(null);
       fetchIncidents();
     } catch (e) { console.error('Failed to archive'); }
@@ -194,7 +195,7 @@ export default function IncidentsModule() {
   const addNote = async () => {
     if (!newNote.trim() || !selectedIncident) return;
     try {
-      await fetch(`/api/incidents/${selectedIncident.id}/notes`, {
+      await fetchWithAuth(`/api/incidents/${selectedIncident.id}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ note: newNote }),
@@ -207,7 +208,7 @@ export default function IncidentsModule() {
   const addEvidence = async () => {
     if (!selectedIncident) return;
     try {
-      await fetch(`/api/incidents/${selectedIncident.id}/evidence`, {
+      await fetchWithAuth(`/api/incidents/${selectedIncident.id}/evidence`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(evidenceForm),
@@ -224,7 +225,7 @@ export default function IncidentsModule() {
     const secondaries = selectedForMerge.slice(1);
     if (!confirm(`Merge ${secondaries.length} incidents into the first selected?`)) return;
     try {
-      const res = await fetch('/api/incidents/merge', {
+      const res = await fetchWithAuth('/api/incidents/merge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ primary_id: primary, secondary_ids: secondaries }),
