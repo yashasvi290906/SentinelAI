@@ -28,16 +28,30 @@ class Settings:
             "DATABASE_PATH", str(Path(__file__).parent / "sentinelai.db")
         )
 
-        # ── Optional (warn if missing) ──
+        # ── Optional: Redis ──
+        self.REDIS_URL: str = os.environ.get("REDIS_URL", "")
+
+        # ── Optional: AI ──
         self.GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
         self.JWT_SECRET_KEY: str = os.environ.get("JWT_SECRET_KEY", "")
         self.GOOGLE_APPLICATION_CREDENTIALS: str = os.environ.get(
             "GOOGLE_APPLICATION_CREDENTIALS", ""
         ).strip('"').strip("'")
-        self.REDIS_URL: str = os.environ.get("REDIS_URL", "")
+
+        # ── Optional: SMTP ──
+        self.SMTP_HOST: str = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+        self.SMTP_PORT: int = int(os.environ.get("SMTP_PORT", "587"))
+        self.SMTP_USER: str = os.environ.get("SMTP_USER", "")
+        self.SMTP_PASSWORD: str = os.environ.get("SMTP_PASSWORD", "")
+        self.SMTP_FROM: str = os.environ.get("SMTP_FROM", self.SMTP_USER)
+
+        # ── Optional: CORS ──
         self.CORS_ORIGINS: str = os.environ.get(
             "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
         )
+
+        # ── Optional: Frontend reference ──
+        self.NEXT_PUBLIC_API_URL: str = os.environ.get("NEXT_PUBLIC_API_URL", "")
 
         # ── Derived ──
         self.USE_POSTGRESQL: bool = bool(
@@ -58,7 +72,8 @@ class Settings:
             errors.append("Neither DATABASE_URL nor DATABASE_PATH is set — no database available")
 
         if self.USE_POSTGRESQL:
-            logger.info(f"Database: PostgreSQL ({self.DATABASE_URL.split('@')[-1] if '@' in self.DATABASE_URL else 'configured'})")
+            host = self.DATABASE_URL.split('@')[-1].split('/')[0] if '@' in self.DATABASE_URL else 'configured'
+            logger.info(f"Database: PostgreSQL ({host})")
         else:
             logger.info(f"Database: SQLite ({self.DATABASE_PATH})")
 
@@ -69,6 +84,9 @@ class Settings:
 
         if not self.REDIS_URL:
             warnings.append("REDIS_URL not set — caching will use in-memory fallback")
+
+        if not self.SMTP_USER:
+            warnings.append("SMTP_USER not set — email notifications disabled")
 
         if self.GOOGLE_APPLICATION_CREDENTIALS:
             cred_path = Path(self.GOOGLE_APPLICATION_CREDENTIALS)

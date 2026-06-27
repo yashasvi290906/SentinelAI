@@ -5,6 +5,7 @@ Handles: users, sessions, logs, threats, predictions, reports, notifications, au
 """
 import os
 import json
+import ssl
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,11 @@ except ImportError:
     HAS_POSTGRESQL = False
 
 DB_URL = os.environ.get("DATABASE_URL", "")
+# Auto-append sslmode=require for Neon PostgreSQL if not present
+if DB_URL and DB_URL.startswith("postgres") and "sslmode=" not in DB_URL:
+    separator = "&" if "?" in DB_URL else "?"
+    DB_URL = f"{DB_URL}{separator}sslmode=require"
+
 DB_PATH = Path(os.environ.get("DATABASE_PATH", Path(__file__).parent / "sentinelai.db"))
 
 USE_POSTGRESQL = HAS_POSTGRESQL and DB_URL and DB_URL.startswith("postgres")
@@ -87,7 +93,17 @@ class DatabaseManager:
         self._create_tables_sqlite()
 
     def _init_postgresql(self):
-        self.conn = psycopg2.connect(DB_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+        ssl_context = None
+        if 'localhost' not in DB_URL and '127.0.0.1' not in DB_URL:
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+        conn_params = {'cursor_factory': psycopg2.extras.RealDictCursor}
+        if ssl_context:
+            conn_params['sslmode'] = 'require'
+
+        self.conn = psycopg2.connect(DB_URL, **conn_params)
         self.conn.autocommit = False
         try:
             self._create_tables_postgresql()

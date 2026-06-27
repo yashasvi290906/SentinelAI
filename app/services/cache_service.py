@@ -1,12 +1,16 @@
 """Redis caching layer for SentinelAI. Falls back to in-memory if Redis unavailable."""
 import json
 import time
+import os
 from typing import Any, Optional
 
 _redis_client = None
 _memory_cache: dict[str, tuple[Any, float]] = {}
 MEMORY_MAX = 1000
 MEMORY_TTL = 300
+
+# Flag for health checks
+redis_enabled: bool = bool(os.environ.get("REDIS_URL", ""))
 
 
 def _get_redis():
@@ -15,7 +19,10 @@ def _get_redis():
         return _redis_client
     try:
         import redis
-        url = __import__("os").environ.get("REDIS_URL", "redis://localhost:6379/0")
+        url = os.environ.get("REDIS_URL", "")
+        if not url:
+            _redis_client = False
+            return None
         _redis_client = redis.from_url(url, decode_responses=True, socket_timeout=3)
         _redis_client.ping()
         return _redis_client

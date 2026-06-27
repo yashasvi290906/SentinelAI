@@ -399,29 +399,85 @@ async def home():
 
 @app.get("/health")
 async def health():
-    db_status = "disconnected"
+    from datetime import datetime as _dt
+    now = _dt.now(timezone.utc).isoformat()
+    services = {}
+    any_degraded = False
+    any_down = False
+
+    # ── Database check ──
+    db_start = time.perf_counter()
+    db_status = "down"
     db_type = "none"
+    db_latency = 0
     try:
         with db._cursor() as cur:
             cur.execute("SELECT 1")
-        db_status = "connected"
+        db_status = "up"
         db_type = "postgresql" if db.use_postgresql else "sqlite"
     except Exception:
-        db_status = "error"
+        db_status = "down"
+        any_down = True
+    db_latency = round((time.perf_counter() - db_start) * 1000, 2)
+    services["database"] = {"status": db_status, "type": db_type, "latency_ms": db_latency}
 
+    # ── Redis check ──
+    try:
+        from services.cache_service import _get_redis, redis_enabled
+        if redis_enabled:
+            r = _get_redis()
+            if r and r is not False:
+                r_start = time.perf_counter()
+                r.ping()
+                r_latency = round((time.perf_counter() - r_start) * 1000, 2)
+                services["redis"] = {"status": "up", "latency_ms": r_latency}
+            else:
+                services["redis"] = {"status": "down", "latency_ms": 0}
+                any_degraded = True
+        else:
+            services["redis"] = {"status": "disabled", "latency_ms": 0}
+    except Exception:
+        services["redis"] = {"status": "disabled", "latency_ms": 0}
+
+    # ── Gemini check ──
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    gemini_status = "configured" if gemini_key and gemini_key.startswith("AIzaSy") else "not_configured"
+    if gemini_key and gemini_key.startswith("AIzaSy"):
+        services["gemini"] = {"status": "configured"}
+    else:
+        services["gemini"] = {"status": "unconfigured"}
 
-    ws_status = "active" if hasattr(app, 'websockets') or True else "inactive"
+    # ── SMTP check ──
+    smtp_user = os.environ.get("SMTP_USER", "")
+    services["smtp"] = {"status": "configured" if smtp_user else "unconfigured"}
+
+    # ── Scheduler check ──
+    services["scheduler"] = {"status": "running" if scheduler else "unavailable"}
+
+    # ── Overall status ──
+    if any_down:
+        overall = "unhealthy"
+    elif any_degraded:
+        overall = "degraded"
+    else:
+        overall = "healthy"
 
     return {
-        "status": "healthy",
-        "database": db_status,
-        "database_type": db_type,
-        "gemini": gemini_status,
-        "websocket": ws_status,
+        "status": overall,
+        "timestamp": now,
         "version": MODEL_VERSION,
+        "services": services,
     }
+
+
+@app.get("/health/ready")
+async def health_ready():
+    """Kubernetes-style readiness probe: 200 only if PostgreSQL/SQLite is connected."""
+    try:
+        with db._cursor() as cur:
+            cur.execute("SELECT 1")
+        return {"status": "ready"}
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "not ready", "error": "database unavailable"})
 
 
 @app.get("/history")
